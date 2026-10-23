@@ -1,11 +1,11 @@
 """
-mrmgov: SR 11-7 / RBI Model Risk Management (MRM) Governance Engine.
+mrmgov: model risk checks for credit models (reference implementation, generated data only).
 
 Provides:
 1. Covariate vs Concept Drift Decomposition & Per-Feature Attribution (PSI, KS, Wasserstein-1, heuristic shares).
 2. Mondrian (Group-Conditional) Split Conformal Prediction Abstention Layer.
-3. ECOA / Fair-Lending Disparate Impact Auditor & Constrained Threshold Repair (Four-Fifths Rule).
-4. SR 11-7 / RBI Hash-Chained Model Governance Audit Certificate & Benchmark Suite.
+3. Group fairness metrics (DIR, EOD, AOD) and a diagnostic per-group threshold search.
+4. Hash-chained, Ed25519-signed record of the checks, and a benchmark suite.
 """
 
 from .drift import (
