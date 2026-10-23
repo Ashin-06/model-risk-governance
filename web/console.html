@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SR 11-7 / RBI Model Risk Governance Console — mrmgov</title>
+  <style>
+    :root {
+      --bg: #0b1020;
+      --panel: #131b33;
+      --border: #25335a;
+      --accent: #38bdf8;
+      --emerald: #10b981;
+      --amber: #f59e0b;
+      --rose: #f43f5e;
+      --text: #e2e8f0;
+      --muted: #94a3b8;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      padding: 24px;
+      line-height: 1.5;
+    }
+    header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 18px 24px;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      margin-bottom: 20px;
+    }
+    h1 { font-size: 1.35rem; font-weight: 700; color: #fff; }
+    .subtitle { font-size: 0.85rem; color: var(--muted); margin-top: 4px; }
+    .badge {
+      display: inline-block;
+      padding: 5px 12px;
+      border-radius: 999px;
+      font-size: 0.78rem;
+      font-weight: 600;
+      background: rgba(16, 185, 129, 0.15);
+      color: var(--emerald);
+      border: 1px solid rgba(16, 185, 129, 0.35);
+    }
+    .btn {
+      background: linear-gradient(135deg, #0284c7, #2563eb);
+      color: #fff;
+      border: none;
+      padding: 10px 18px;
+      border-radius: 8px;
+      font-weight: 600;
+      cursor: pointer;
+      font-size: 0.9rem;
+    }
+    .btn:hover { opacity: 0.92; }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
+      gap: 18px;
+      margin-bottom: 20px;
+    }
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 18px;
+    }
+    .card h2 {
+      font-size: 1rem;
+      color: var(--accent);
+      margin-bottom: 12px;
+      border-bottom: 1px solid var(--border);
+      padding-bottom: 8px;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.84rem;
+    }
+    th, td {
+      text-align: left;
+      padding: 8px 6px;
+      border-bottom: 1px solid rgba(255,255,255,0.06);
+    }
+    th { color: var(--muted); font-weight: 600; }
+    .mono { font-family: "JetBrains Mono", Consolas, monospace; font-size: 0.8rem; }
+    .kpi-row {
+      display: flex;
+      justify-content: space-between;
+      margin-bottom: 8px;
+      font-size: 0.88rem;
+    }
+    .pass { color: var(--emerald); font-weight: 700; }
+    .warn { color: var(--amber); font-weight: 700; }
+    .fail { color: var(--rose); font-weight: 700; }
+  </style>
+</head>
+<body>
+  <header>
+    <div>
+      <h1>SR 11-7 / RBI Model Risk Governance Engine (mrmgov)</h1>
+      <div class="subtitle">
+        Covariate vs Concept Drift Attribution • Mondrian Conformal Abstention • ECOA Four-Fifths Fair-Lending Repair
+      </div>
+    </div>
+    <div>
+      <button class="btn" onclick="loadBench()">Run Live SR 11-7 Benchmark</button>
+    </div>
+  </header>
+
+  <div class="grid">
+    <div class="card">
+      <h2>1. Covariate vs Concept Drift Attribution</h2>
+      <div id="drift-summary">Click "Run Live SR 11-7 Benchmark" to inspect feature PSI, KS, Wasserstein-1 & Shapley shares.</div>
+      <table id="drift-table" style="margin-top:12px;">
+        <thead>
+          <tr>
+            <th>Feature</th>
+            <th>PSI</th>
+            <th>KS</th>
+            <th>Cov Shapley</th>
+            <th>Mode</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+
+    <div class="card">
+      <h2>2. Mondrian Conformal Prediction (α = 0.05)</h2>
+      <div id="conformal-summary">Calibrates group-conditional finite-sample quantiles for {0}, {1}, and {0,1} abstention.</div>
+      <table id="conformal-table" style="margin-top:12px;">
+        <thead>
+          <tr>
+            <th>Group</th>
+            <th>q̂_g</th>
+            <th>Empirical Cov</th>
+            <th>Abstain %</th>
+            <th>Status</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+
+    <div class="card">
+      <h2>3. ECOA Four-Fifths Fair-Lending Repair</h2>
+      <div id="fairness-summary">Constrained group-threshold optimization maximizing bank profit subject to DIR ≥ 0.80 & |EOD| ≤ 0.03.</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>4. Hash-Chained SR 11-7 / RBI Model Governance Certificate</h2>
+    <div id="cert-box" class="mono">Awaiting benchmark execution...</div>
+  </div>
+
+  <script>
+    async function loadBench() {
+      const res = await fetch('/bench');
+      const data = await res.json();
+
+      const cov = data.drift_scenarios.covariate_drift;
+      const conc = data.drift_scenarios.concept_drift;
+      document.getElementById('drift-summary').innerHTML = `
+        <div class="kpi-row"><span>Covariate Shift Scenario:</span><span class="warn">${cov.regime} (${cov.covariate_drifted_features.join(', ')})</span></div>
+        <div class="kpi-row"><span>Concept Shift Scenario:</span><span class="fail">${conc.regime} (${conc.concept_drifted_features.join(', ')})</span></div>
+        <div class="kpi-row"><span>Additive ΔBrier (Cov + Concept):</span><span class="mono">${cov.delta_brier_covariate.toFixed(4)} + ${cov.delta_brier_concept.toFixed(4)} = ${cov.delta_brier_total.toFixed(4)}</span></div>
+      `;
+
+      const tbody = document.querySelector('#drift-table tbody');
+      tbody.innerHTML = '';
+      cov.feature_metrics.forEach(m => {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+          <td class="mono">${m.feature_name}</td>
+          <td>${m.psi.toFixed(4)}</td>
+          <td>${m.ks_stat.toFixed(4)}</td>
+          <td>${(m.covariate_shapley_share * 100).toFixed(1)}%</td>
+          <td class="${m.is_drifted ? 'warn' : 'pass'}">${m.drift_mode}</td>
+        `;
+        tbody.appendChild(tr);
+      });
+
+      const conf = data.conformal.result;
+      document.getElementById('conformal-summary').innerHTML = `
+        <div class="kpi-row"><span>Target Coverage (1 - α):</span><span>${(conf.target_coverage * 100).toFixed(1)}%</span></div>
+        <div class="kpi-row"><span>Overall Empirical Coverage:</span><span class="pass">${(conf.overall_coverage * 100).toFixed(2)}%</span></div>
+        <div class="kpi-row"><span>Singleton Accuracy ({0} / {1}):</span><span class="pass">${(conf.overall_singleton_accuracy * 100).toFixed(2)}%</span></div>
+      `;
+      const ctbody = document.querySelector('#conformal-table tbody');
+      ctbody.innerHTML = '';
+      conf.group_reports.forEach(g => {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+          <td class="mono">${g.group_id}</td>
+          <td>${g.q_hat.toFixed(4)}</td>
+          <td class="pass">${(g.empirical_coverage * 100).toFixed(2)}%</td>
+          <td>${(g.abstention_rate * 100).toFixed(1)}%</td>
+          <td class="pass">${g.is_valid_coverage ? 'VALID (≥94.5%)' : 'BREACH'}</td>
+        `;
+        ctbody.appendChild(tr);
+      });
+
+      const f = data.fairness;
+      document.getElementById('fairness-summary').innerHTML = `
+        <div class="kpi-row"><span>Baseline Disparate Impact (DIR):</span><span class="fail">${f.baseline.disparate_impact_ratio.toFixed(4)} (Non-Compliant)</span></div>
+        <div class="kpi-row"><span>Repaired Disparate Impact (DIR):</span><span class="pass">${f.repaired.disparate_impact_ratio.toFixed(4)} (ECOA Compliant ≥ 0.80)</span></div>
+        <div class="kpi-row"><span>Equal Opportunity Diff (EOD):</span><span class="pass">${f.baseline.equal_opportunity_diff.toFixed(4)} → ${f.repaired.equal_opportunity_diff.toFixed(4)}</span></div>
+        <div class="kpi-row"><span>Optimal Thresholds (t_priv*, t_unpriv*):</span><span class="mono">(${f.repaired.threshold_privileged.toFixed(3)}, ${f.repaired.threshold_unprivileged.toFixed(3)})</span></div>
+        <div class="kpi-row"><span>ROC-AUC Retention:</span><span class="pass">${(f.auc_retention_ratio * 100).toFixed(2)}%</span></div>
+        <div class="kpi-row"><span>Expected Profit Retention:</span><span class="pass">${(f.profit_retention_ratio * 100).toFixed(2)}%</span></div>
+      `;
+
+      const c = data.certificate;
+      document.getElementById('cert-box').innerHTML = `
+        <div><strong>Certificate ID:</strong> ${c.certificate_id} | <strong>Disposition:</strong> <span class="pass">${c.overall_disposition}</span></div>
+        <div><strong>Genesis Hash:</strong> ${c.hash_chain.genesis_header_hash}</div>
+        <div><strong>Drift Block:</strong>   ${c.hash_chain.drift_block_hash}</div>
+        <div><strong>Conformal:</strong>     ${c.hash_chain.conformal_block_hash}</div>
+        <div><strong>Fairness:</strong>      ${c.hash_chain.fairness_block_hash}</div>
+        <div><strong>Root Digest:</strong>   <span class="pass">${c.certificate_root_hash}</span></div>
+      `;
+    }
+    window.addEventListener('DOMContentLoaded', loadBench);
+  </script>
+</body>
+</html>
