@@ -88,9 +88,6 @@ def compute_psi(
     if ref_arr.size == 0 or prod_arr.size == 0:
         raise ValueError("Reference and production arrays must be non-empty.")
 
-    if np.allclose(ref_arr, prod_arr):
-        return 0.0
-
     quantiles = np.linspace(0.0, 1.0, n_bins + 1)
     edges = np.quantile(ref_arr, quantiles)
     edges = np.unique(edges)

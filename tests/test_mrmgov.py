@@ -52,6 +52,10 @@ def test_psi_ks_wasserstein_identities_and_monotonicity() -> None:
     w1_sev, _ = compute_wasserstein_1d(ref, prod_severe)
     assert 0.30 < w1_mod < w1_sev
 
+    # Production windows are rarely the same size as the reference window
+    assert compute_psi(ref, ref[:700]) < 0.05
+    assert compute_psi(ref, prod_severe[:700]) > 0.45
+
 
 def test_covariate_vs_concept_drift_decomposition_and_attribution() -> None:
     bench = run_benchmark_suite(seed=42)
