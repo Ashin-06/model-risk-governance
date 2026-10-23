@@ -1,0 +1,315 @@
+{
+  "dataset": "UCI Default of Credit Card Clients (30,000 rows, CC BY 4.0)",
+  "rows": 30000,
+  "default_rate": 0.2212,
+  "group_sizes": {
+    "female": 18112,
+    "male": 11888
+  },
+  "scenarios": {
+    "random": {
+      "rows": {
+        "fit": 7493,
+        "calibration": 3747,
+        "reference_test": 3747,
+        "production": 15013
+      },
+      "default_rate": {
+        "reference": 0.2187,
+        "production": 0.2237
+      },
+      "auc": {
+        "reference_test": 0.7437,
+        "production": 0.7481
+      },
+      "drift": {
+        "regime": "NO_DRIFT",
+        "domain_classifier_auc": 0.517252,
+        "max_psi": 0.006852,
+        "brier_ref": 0.142188,
+        "brier_prod": 0.14405,
+        "delta_brier_covariate": -0.000254,
+        "delta_brier_concept": 0.002115,
+        "residual_calibration_shift": 0.008251,
+        "covariate_drifted_features": [],
+        "concept_drifted_features": []
+      },
+      "refit_on_production": {
+        "brier_reference_model": 0.14569,
+        "brier_production_model": 0.14391
+      },
+      "conformal": {
+        "alpha": 0.05,
+        "reference_test": {
+          "overall_coverage": 0.953029,
+          "abstention": 0.5679,
+          "by_sex": {
+            "female": {
+              "coverage": 0.9517,
+              "abstention": 0.5192,
+              "n": 2236
+            },
+            "male": {
+              "coverage": 0.955,
+              "abstention": 0.64,
+              "n": 1511
+            }
+          }
+        },
+        "production": {
+          "overall_coverage": 0.954373,
+          "abstention": 0.5647,
+          "by_sex": {
+            "female": {
+              "coverage": 0.9481,
+              "abstention": 0.5181,
+              "n": 9081
+            },
+            "male": {
+              "coverage": 0.9639,
+              "abstention": 0.636,
+              "n": 5932
+            }
+          }
+        }
+      }
+    },
+    "age": {
+      "rows": {
+        "fit": 7848,
+        "calibration": 3924,
+        "reference_test": 3924,
+        "production": 14304
+      },
+      "default_rate": {
+        "reference": 0.2148,
+        "production": 0.2283
+      },
+      "auc": {
+        "reference_test": 0.7396,
+        "production": 0.7375
+      },
+      "drift": {
+        "regime": "COVARIATE_DRIFT",
+        "domain_classifier_auc": 1.0,
+        "max_psi": 7.524575,
+        "brier_ref": 0.137369,
+        "brier_prod": 0.146786,
+        "delta_brier_covariate": 0.000334,
+        "delta_brier_concept": 0.009083,
+        "residual_calibration_shift": 0.023913,
+        "covariate_drifted_features": [
+          "MARRIAGE",
+          "AGE"
+        ],
+        "concept_drifted_features": []
+      },
+      "refit_on_production": {
+        "brier_reference_model": 0.14785,
+        "brier_production_model": 0.14793
+      },
+      "conformal": {
+        "alpha": 0.05,
+        "reference_test": {
+          "overall_coverage": 0.948777,
+          "abstention": 0.5206,
+          "by_sex": {
+            "female": {
+              "coverage": 0.9492,
+              "abstention": 0.499,
+              "n": 2501
+            },
+            "male": {
+              "coverage": 0.948,
+              "abstention": 0.5587,
+              "n": 1423
+            }
+          }
+        },
+        "production": {
+          "overall_coverage": 0.938199,
+          "abstention": 0.4865,
+          "by_sex": {
+            "female": {
+              "coverage": 0.9378,
+              "abstention": 0.4503,
+              "n": 8131
+            },
+            "male": {
+              "coverage": 0.9388,
+              "abstention": 0.5343,
+              "n": 6173
+            }
+          }
+        }
+      }
+    },
+    "limit": {
+      "rows": {
+        "fit": 7645,
+        "calibration": 3822,
+        "reference_test": 3823,
+        "production": 14710
+      },
+      "default_rate": {
+        "reference": 0.2827,
+        "production": 0.1573
+      },
+      "auc": {
+        "reference_test": 0.7457,
+        "production": 0.6658
+      },
+      "drift": {
+        "regime": "COVARIATE_DRIFT",
+        "domain_classifier_auc": 0.999999,
+        "max_psi": 7.792274,
+        "brier_ref": 0.167009,
+        "brier_prod": 0.116746,
+        "delta_brier_covariate": -0.004103,
+        "delta_brier_concept": -0.046161,
+        "residual_calibration_shift": 0.001767,
+        "covariate_drifted_features": [
+          "LIMIT_BAL",
+          "EDUCATION",
+          "AGE",
+          "PAY_0",
+          "PAY_2",
+          "PAY_3",
+          "PAY_4",
+          "PAY_5",
+          "PAY_6",
+          "BILL_AMT1",
+          "BILL_AMT2",
+          "BILL_AMT3",
+          "BILL_AMT4",
+          "BILL_AMT5",
+          "BILL_AMT6",
+          "PAY_AMT1",
+          "PAY_AMT2",
+          "PAY_AMT3",
+          "PAY_AMT4",
+          "PAY_AMT5",
+          "PAY_AMT6"
+        ],
+        "concept_drifted_features": []
+      },
+      "refit_on_production": {
+        "brier_reference_model": 0.11152,
+        "brier_production_model": 0.11205
+      },
+      "conformal": {
+        "alpha": 0.05,
+        "reference_test": {
+          "overall_coverage": 0.956317,
+          "abstention": 0.7065,
+          "by_sex": {
+            "female": {
+              "coverage": 0.9519,
+              "abstention": 0.6527,
+              "n": 2266
+            },
+            "male": {
+              "coverage": 0.9627,
+              "abstention": 0.7848,
+              "n": 1557
+            }
+          }
+        },
+        "production": {
+          "overall_coverage": 0.921618,
+          "abstention": 0.2548,
+          "by_sex": {
+            "female": {
+              "coverage": 0.9183,
+              "abstention": 0.2194,
+              "n": 9189
+            },
+            "male": {
+              "coverage": 0.9272,
+              "abstention": 0.3137,
+              "n": 5521
+            }
+          }
+        }
+      }
+    }
+  },
+  "fairness": {
+    "cutoff_from_calibration": 0.625,
+    "single_cutoff_on_test": {
+      "approval_rate_privileged": 0.831899,
+      "approval_rate_unprivileged": 0.850626,
+      "disparate_impact_ratio": 1.022511,
+      "tpr_privileged": 0.91331,
+      "tpr_unprivileged": 0.915501,
+      "equal_opportunity_diff": 0.002191,
+      "average_odds_diff": 0.007336,
+      "expected_profit": 0.510008
+    },
+    "group_thresholds_from_calibration": {
+      "male": 0.614706,
+      "female": 0.625
+    },
+    "search_status": "TARGETS_MET_WITH_GROUP_THRESHOLDS",
+    "group_thresholds_on_test": {
+      "approval_rate_privileged": 0.839841,
+      "approval_rate_unprivileged": 0.850626,
+      "disparate_impact_ratio": 1.012842,
+      "tpr_privileged": 0.916813,
+      "tpr_unprivileged": 0.915501,
+      "equal_opportunity_diff": -0.001312,
+      "average_odds_diff": -0.005255,
+      "expected_profit": 0.507659
+    }
+  },
+  "abstention_by_alpha": {
+    "0.05": {
+      "overall_coverage": 0.953029,
+      "abstention": 0.5679,
+      "by_sex": {
+        "female": {
+          "coverage": 0.9517,
+          "abstention": 0.5192,
+          "n": 2236
+        },
+        "male": {
+          "coverage": 0.955,
+          "abstention": 0.64,
+          "n": 1511
+        }
+      }
+    },
+    "0.1": {
+      "overall_coverage": 0.900721,
+      "abstention": 0.2519,
+      "by_sex": {
+        "female": {
+          "coverage": 0.8967,
+          "abstention": 0.2053,
+          "n": 2236
+        },
+        "male": {
+          "coverage": 0.9067,
+          "abstention": 0.321,
+          "n": 1511
+        }
+      }
+    },
+    "0.2": {
+      "overall_coverage": 0.823592,
+      "abstention": 0.0344,
+      "by_sex": {
+        "female": {
+          "coverage": 0.8408,
+          "abstention": 0.0461,
+          "n": 2236
+        },
+        "male": {
+          "coverage": 0.7981,
+          "abstention": 0.0172,
+          "n": 1511
+        }
+      }
+    }
+  }
+}

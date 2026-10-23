@@ -7,7 +7,7 @@ Three checks a model-risk team might run on a credit model, plus a signed record
 3. **Group fairness metrics** (`fairness.py`): disparate impact ratio, equal opportunity difference and related metrics, plus a search over per-group thresholds used as a diagnostic.
 4. **Certificate** (`report.py`): a hash chain over the three summaries, signed with Ed25519.
 
-Everything here runs on **generated data**. No real credit data has been used.
+The benchmark runs on **generated data**; "Real data" below runs the checks on a public credit dataset.
 
 > The certificate is a record of automated checks, **not a model approval**. SR 11-7 expects independent validation and sign-off by people with that authority. The frameworks the certificate names (SR 11-7, RBI model-risk expectations, ECOA / Reg B, EU AI Act Annex III) are references only. Passing these checks does not show compliance with any of them.
 
@@ -80,12 +80,35 @@ Read these as consistency checks, not measurements:
 
 A single 1,200-point split has a coverage standard deviation of about 0.9 percentage points. The earlier check of "≥ 94.5% in every group on one split" failed on 23 of 40 seeds even though the method was working. The benchmark therefore checks the mean over repeated splits.
 
+## Real data
+
+`python -m mrmgov realdata --data "default of credit card clients.xls"` runs the checks on UCI's Default of Credit Card Clients data: 30,000 card holders at a Taiwanese bank in 2005, 22.1% of whom defaulted the next month (CC BY 4.0). Results are in `results/real_data.json`.
+- **Windows.** The data has no time column, so reference and production are made by splitting on a feature: holders under 35 against 35 and over (age), and credit limits up to the median against above it (limit). A random half-and-half split is the control, where nothing should drift.
+- **Model.** The L2 logistic regression `/audit` fits, on log-scaled amounts. Sex is the group attribute and is kept out of the model. In each split the reference rows are divided 50/25/25 into model fit, conformal calibration and a reference test set. The approval cut-off and the group-threshold search use the calibration rows only.
+
+| Split | Regime | Covariate-drifted features | ROC-AUC ref → prod | Coverage at α = 0.05, ref → prod |
+|---|---|---|---|---|
+| random (control) | `NO_DRIFT` | none | 0.744 → 0.748 | 95.3% → 95.4% |
+| age | `COVARIATE_DRIFT` | AGE, MARRIAGE | 0.740 → 0.738 | 94.9% → **93.8%** |
+| limit | `COVARIATE_DRIFT` | 21 of 22 | 0.746 → **0.666** | 95.6% → **92.2%** |
+
+What the real data shows:
+- **No false alarm on the control**, and both feature splits are caught as covariate drift. That part is easy: the split feature separates the windows perfectly (domain-classifier AUC 1.00).
+- **No concept drift was flagged, and refitting agrees.** A model refitted on half the production rows scores no better on the other half than the reference model (Brier, reference vs refitted: 0.1479 vs 0.1479 for age, 0.1115 vs 0.1121 for limit).
+- **The drift check misses a real loss of accuracy.** In the limit split, ROC-AUC falls from 0.746 to 0.666, yet the regime is plain covariate drift and the Brier score improves (0.167 → 0.117), because high-limit holders default less (15.7% vs 28.3%) and are harder to rank. A monitor watching only the regime and Brier would not see it. When the windows don't overlap at all, the density-ratio weights are degenerate, so the covariate/concept split of the Brier change means little.
+- **Conformal coverage breaks under drift, as expected.** It holds on the reference test sets (94.9–95.6%) and falls to 93.8% and 92.2% in production, well outside sampling error (about 0.2 points on 14,000 rows).
+- **Abstention is heavy on real scores.** At α = 0.05, 57% of applicants go to a human underwriter (64% of men, 52% of women), against 42% on the generated data. At α = 0.10 it is 25%, at α = 0.20 3%.
+- **No adverse impact against women at a single cut-off.** Approving when P(repay) ≥ 0.625 (the most profitable cut-off on the calibration rows) approves 85.1% of women and 83.2% of men: DIR 1.02, EOD +0.002. Women in this data default less (20.8% vs 24.2%). The group-threshold search finds almost nothing to change (DIR 1.01).
+
+These come from one run (seed 0); nothing was tuned after seeing them.
+
 ## Run it
 
 ```bash
 pip install -r requirements.txt
-python -m pytest -q                        # 8 tests
+python -m pytest -q                        # 9 tests
 python -m mrmgov bench                     # add --json for the full report
+python -m mrmgov realdata --data FILE      # UCI credit default data, a few seconds
 python -m mrmgov serve --port 8019         # API + console at http://127.0.0.1:8019
 ```
 
@@ -115,7 +138,7 @@ A maximum-size `/audit` takes about 2.3 s.
 
 ## Limits
 
-- **Generated data only.** A real test would use a public credit dataset. The UCI "Default of Credit Card Clients" dataset (30,000 rows, CC BY 4.0) fits: it has default outcomes and a sex attribute for the fairness metrics. It has no time ordering, so drift windows would have to be built by splitting on a feature such as age or credit limit. It hasn't been run.
+- **One real dataset, no real time order.** The UCI test builds its drift windows by splitting on a feature, which is starker than drift over time, and it has outcomes for every holder (no reject-inference problem).
 - **Drift detection is heuristic.** The thresholds are hand-set and the attribution shares aren't Shapley values. The density ratio comes from a linear classifier, so a shift in variance or interactions can be misattributed to concept drift. Two of 40 seeds flagged an extra feature.
 - **Conformal coverage is conditional on exchangeability.** Under drift, which is exactly when it matters, the guarantee no longer holds. Groups unseen in calibration fall back to the pooled threshold, which has no per-group guarantee. Coverage is marginal within a group, not per applicant.
 - **Fairness metrics need outcomes for everyone.** In lending, repayment is only observed for approved applicants, so EOD on real data needs reject inference. The group-threshold search is disparate treatment and is only for diagnosis (see above).
