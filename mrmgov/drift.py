@@ -259,11 +259,23 @@ def analyze_drift(
         X_ref = X_ref[:, None]
     if X_prod.ndim == 1:
         X_prod = X_prod[:, None]
+    if X_ref.ndim != 2 or X_prod.ndim != 2 or X_ref.shape[1] != X_prod.shape[1]:
+        raise ValueError("X_ref and X_prod must be 2-D with the same number of features.")
+    if y_ref.size != X_ref.shape[0] or y_prod.size != X_prod.shape[0]:
+        raise ValueError("y_ref / y_prod must have one label per row of X_ref / X_prod.")
+    if X_ref.shape[0] < 2 or X_prod.shape[0] < 2:
+        raise ValueError("Need at least 2 reference and 2 production rows.")
+    if not (np.all(np.isfinite(X_ref)) and np.all(np.isfinite(X_prod))):
+        raise ValueError("X_ref and X_prod must be finite.")
+    if not np.all(np.isin(y_ref, (0.0, 1.0))) or not np.all(np.isin(y_prod, (0.0, 1.0))):
+        raise ValueError("Labels must be 0 or 1.")
 
     n_ref, n_features = X_ref.shape
     n_prod = X_prod.shape[0]
     if feature_names is None:
         feature_names = [f"feature_{j}" for j in range(n_features)]
+    if len(feature_names) != n_features:
+        raise ValueError("feature_names must have one name per feature.")
 
     # Standardize using reference statistics
     mu_ref = np.mean(X_ref, axis=0)

@@ -120,6 +120,10 @@ def compute_fairness_metrics(
     g = np.asarray([str(v) for v in groups])
     priv_str = str(privileged_group)
     unpriv_str = str(unprivileged_group)
+    if not (s.size == y.size == g.size):
+        raise ValueError("scores, y_true and groups must have the same length.")
+    if not np.all(np.isfinite(s)) or not np.all(np.isin(y, (0, 1))):
+        raise ValueError("scores must be finite and y_true must be 0 or 1.")
 
     priv_mask = g == priv_str
     unpriv_mask = g == unpriv_str

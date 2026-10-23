@@ -128,6 +128,8 @@ class MondrianConformalPredictor:
 
         if not (p.size == y.size == g.size) or p.size == 0:
             raise ValueError("Calibration inputs must be non-empty and have matching lengths.")
+        if not np.all(np.isfinite(p)) or not np.all(np.isin(y, (0, 1))):
+            raise ValueError("Calibration probabilities must be finite and labels 0 or 1.")
 
         all_scores = self.nonconformity_score(p, y)
         self.global_q_hat_, _ = self.finite_sample_quantile(all_scores, self.alpha)
@@ -164,12 +166,14 @@ class MondrianConformalPredictor:
         g = np.asarray([str(v) for v in groups_test])
         if p.size != g.size or p.size == 0:
             raise ValueError("Test probabilities and groups must be non-empty and match in length.")
+        if not np.all(np.isfinite(p)):
+            raise ValueError("Test probabilities must be finite.")
 
         y_arr: Optional[np.ndarray] = None
         if y_test is not None:
             y_arr = np.asarray(y_test, dtype=int).ravel()
-            if y_arr.size != p.size:
-                raise ValueError("y_test length must match probs_test length.")
+            if y_arr.size != p.size or not np.all(np.isin(y_arr, (0, 1))):
+                raise ValueError("y_test must match probs_test in length and be 0 or 1.")
 
         prediction_sets: List[List[int]] = []
         decisions: List[str] = []

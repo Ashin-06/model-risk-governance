@@ -57,6 +57,30 @@ def test_psi_ks_wasserstein_identities_and_monotonicity() -> None:
     assert compute_psi(ref, prod_severe[:700]) > 0.45
 
 
+def test_bad_inputs_raise_value_error() -> None:
+    rng = np.random.default_rng(5)
+    X, y = rng.normal(size=(50, 3)), rng.integers(0, 2, size=50)
+    bad_drift = [
+        (X, y, X[:, :2], y),            # feature counts differ
+        (X, y[:40], X, y),              # labels don't match rows
+        (X, y, np.full((50, 3), np.nan), y),
+        (X, y + 1, X, y),               # labels outside {0, 1}
+    ]
+    for args in bad_drift:
+        with pytest.raises(ValueError):
+            analyze_drift(*args)
+    with pytest.raises(ValueError):
+        analyze_drift(X, y, X, y, feature_names=["a"])
+
+    groups = [i % 2 for i in range(50)]
+    with pytest.raises(ValueError):
+        repair_group_thresholds(rng.random(50), y[:49], groups)
+    with pytest.raises(ValueError):
+        MondrianConformalPredictor().fit([np.nan] * 50, y, groups)
+    with pytest.raises(ValueError):
+        MondrianConformalPredictor().fit(rng.random(50), y + 1, groups)
+
+
 def test_covariate_vs_concept_drift_decomposition_and_attribution() -> None:
     bench = run_benchmark_suite(seed=42)
     no_drift = bench["drift_scenarios"]["no_drift"]
