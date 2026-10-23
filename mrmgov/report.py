@@ -1,12 +1,18 @@
 """
-SR 11-7 (Federal Reserve / OCC) & RBI Model Risk Governance Audit Certificate Engine.
+Signed record of the automated model-risk checks.
 
-Produces tamper-evident, SHA-256 hash-chained governance certificates combining:
-  - Block 0 (Genesis Header): Model ID, version, regulator framework, timestamp
-  - Block 1 (Drift Attribution): Covariate vs Concept drift decomposition
-  - Block 2 (Mondrian Conformal): Group-conditional coverage & abstention verification
-  - Block 3 (ECOA Fair-Lending): Disparate Impact Four-Fifths & Equal Opportunity repair
-  - Root Sign-off: Deterministic SHA-256 Merkle/Chain digest
+A certificate chains SHA-256 hashes over:
+  - Block 0 (header): model ID, version, frameworks referenced, timestamp
+  - Block 1 (drift): covariate vs concept drift summary
+  - Block 2 (conformal): group coverage and abstention
+  - Block 3 (fairness): disparate impact and equal opportunity summary
+  - Root: checklist + disposition + the block hashes
+and signs the root hash with Ed25519. Verification needs the signer's public key
+from a trusted source; without the signature the hash chain alone proves nothing,
+since anyone who edits a value can recompute every hash.
+
+This is not a model approval. SR 11-7 expects independent validation and sign-off
+by people with that authority; the disposition only summarises automated checks.
 """
 
 from __future__ import annotations
@@ -16,6 +22,9 @@ from datetime import datetime, timezone
 import hashlib
 import json
 from typing import Dict, List, Optional
+
+from cryptography.exceptions import InvalidSignature
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey, Ed25519PublicKey
 
 from .drift import DriftDecompositionResult
 from .conformal import ConformalPredictionResult
@@ -30,21 +39,22 @@ def _canonical_sha256(prev_hash: str, payload: Dict[str, object]) -> str:
 
 @dataclass
 class GovernanceCertificate:
-    """Hash-chained SR 11-7 / RBI Model Governance Audit Certificate."""
+    """Hash-chained, Ed25519-signed record of automated model-risk checks."""
 
     certificate_id: str
     model_id: str
     model_version: str
-    regulatory_frameworks: List[str]
+    frameworks_referenced: List[str]
     issued_at_utc: str
     governance_tier: str
-    overall_disposition: str  # "APPROVED_FOR_PRODUCTION" | "CONDITIONAL_APPROVAL_WITH_GUARDRAILS" | "QUARANTINED"
+    overall_disposition: str  # "AUTOMATED_CHECKS_PASSED" | "CHECKS_PASSED_WITH_CONCEPT_DRIFT" | "CHECKS_FAILED"
     checklist: Dict[str, bool]
     drift_summary: Dict[str, object]
     conformal_summary: Dict[str, object]
     fairness_summary: Dict[str, object]
     hash_chain: Dict[str, str]
     certificate_root_hash: str
+    signature: str  # Ed25519 over certificate_root_hash, hex
 
     def to_dict(self) -> Dict[str, object]:
         return asdict(self)
@@ -56,26 +66,28 @@ def generate_governance_certificate(
     drift_result: DriftDecompositionResult,
     conformal_result: ConformalPredictionResult,
     fairness_result: FairnessRepairResult,
+    signing_key: Ed25519PrivateKey,
     issued_at_utc: Optional[str] = None,
     governance_tier: str = "TIER_1_MATERIAL_CREDIT_UNDERWRITING",
 ) -> GovernanceCertificate:
     """
-    Generate a deterministic, hash-chained SR 11-7 / RBI Model Governance Certificate.
+    Generate a hash-chained certificate and sign its root hash with `signing_key`.
     """
     if issued_at_utc is None:
         issued_at_utc = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
+    # Informational: the checks below are inputs to these processes, not evidence of compliance
     frameworks = [
-        "FED_OCC_SR_11_7",
-        "RBI_MRM_2024_GUIDELINES",
-        "ECOA_REGULATION_B_FOUR_FIFTHS",
-        "EU_AI_ACT_HIGH_RISK_CREDIT",
+        "SR 11-7 (Fed/OCC model risk guidance)",
+        "RBI model risk expectations for credit models",
+        "ECOA / Regulation B",
+        "EU AI Act Annex III (credit scoring)",
     ]
 
     header_payload: Dict[str, object] = {
         "model_id": model_id,
         "model_version": model_version,
-        "regulatory_frameworks": frameworks,
+        "frameworks_referenced": frameworks,
         "issued_at_utc": issued_at_utc,
         "governance_tier": governance_tier,
     }
@@ -131,7 +143,7 @@ def generate_governance_certificate(
     fairness_hash = _canonical_sha256(conformal_hash, fairness_summary)
 
     checklist = {
-        "sr11_7_drift_attributed": True,
+        "drift_analysis_run": True,
         "no_unmitigated_concept_drift": drift_result.regime
         not in ("CONCEPT_DRIFT", "COMPOUND_DRIFT"),
         "mondrian_conformal_coverage_verified": bool(all_groups_covered),
@@ -146,26 +158,22 @@ def generate_governance_certificate(
         ),
     }
 
-    root_payload: Dict[str, object] = {
-        "checklist": checklist,
-        "fairness_hash": fairness_hash,
-    }
-    root_hash = _canonical_sha256(fairness_hash, root_payload)
-    cert_id = f"SR117-CERT-{root_hash[:12].upper()}"
-
     if (
         checklist["no_unmitigated_concept_drift"]
         and checklist["mondrian_conformal_coverage_verified"]
         and checklist["dir_meets_four_fifths"]
     ):
-        disposition = "APPROVED_FOR_PRODUCTION"
+        disposition = "AUTOMATED_CHECKS_PASSED"
     elif (
         checklist["mondrian_conformal_coverage_verified"]
         and checklist["dir_meets_four_fifths"]
     ):
-        disposition = "CONDITIONAL_APPROVAL_WITH_GUARDRAILS"
+        disposition = "CHECKS_PASSED_WITH_CONCEPT_DRIFT"
     else:
-        disposition = "QUARANTINED_PENDING_REMEDIATION"
+        disposition = "CHECKS_FAILED"
+
+    root_hash = _canonical_sha256(fairness_hash, _root_payload(checklist, disposition, fairness_hash))
+    cert_id = f"MRM-CERT-{root_hash[:12].upper()}"
 
     hash_chain = {
         "genesis_header_hash": genesis_hash,
@@ -179,7 +187,7 @@ def generate_governance_certificate(
         certificate_id=cert_id,
         model_id=model_id,
         model_version=model_version,
-        regulatory_frameworks=frameworks,
+        frameworks_referenced=frameworks,
         issued_at_utc=issued_at_utc,
         governance_tier=governance_tier,
         overall_disposition=disposition,
@@ -189,18 +197,24 @@ def generate_governance_certificate(
         fairness_summary=fairness_summary,
         hash_chain=hash_chain,
         certificate_root_hash=root_hash,
+        signature=signing_key.sign(root_hash.encode("ascii")).hex(),
     )
 
 
-def verify_certificate_signature(cert: GovernanceCertificate) -> bool:
+def _root_payload(checklist: Dict[str, bool], disposition: str, fairness_hash: str) -> Dict[str, object]:
+    return {"checklist": checklist, "disposition": disposition, "fairness_hash": fairness_hash}
+
+
+def verify_certificate_signature(cert: GovernanceCertificate, public_key: Ed25519PublicKey) -> bool:
     """
-    Recompute the entire SHA-256 hash chain from certificate contents and verify
-    that no block or summary metric has been tampered with.
+    Recompute the hash chain from the certificate contents, then check the Ed25519
+    signature on the root hash against `public_key`, which must come from a trusted
+    source (never from the certificate or whoever sent it).
     """
     header_payload: Dict[str, object] = {
         "model_id": cert.model_id,
         "model_version": cert.model_version,
-        "regulatory_frameworks": cert.regulatory_frameworks,
+        "frameworks_referenced": cert.frameworks_referenced,
         "issued_at_utc": cert.issued_at_utc,
         "governance_tier": cert.governance_tier,
     }
@@ -210,14 +224,22 @@ def verify_certificate_signature(cert: GovernanceCertificate) -> bool:
     expected_fairness = _canonical_sha256(expected_conformal, cert.fairness_summary)
     expected_root = _canonical_sha256(
         expected_fairness,
-        {"checklist": cert.checklist, "fairness_hash": expected_fairness},
+        _root_payload(cert.checklist, cert.overall_disposition, expected_fairness),
     )
 
-    return (
+    chain_ok = (
         cert.hash_chain.get("genesis_header_hash") == expected_genesis
         and cert.hash_chain.get("drift_block_hash") == expected_drift
         and cert.hash_chain.get("conformal_block_hash") == expected_conformal
         and cert.hash_chain.get("fairness_block_hash") == expected_fairness
         and cert.hash_chain.get("certificate_root_hash") == expected_root
         and cert.certificate_root_hash == expected_root
+        and cert.certificate_id == f"MRM-CERT-{expected_root[:12].upper()}"
     )
+    if not chain_ok:
+        return False
+    try:
+        public_key.verify(bytes.fromhex(cert.signature), expected_root.encode("ascii"))
+    except (InvalidSignature, ValueError):
+        return False
+    return True

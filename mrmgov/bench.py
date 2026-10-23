@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from typing import Dict
 import numpy as np
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from .drift import analyze_drift, _sigmoid
 from .conformal import MondrianConformalPredictor
@@ -187,16 +188,18 @@ def run_benchmark_suite(seed: int = 42) -> Dict[str, object]:
         fp_cost=1.25,
     )
 
-    # 4. Generate SR 11-7 / RBI Governance Certificate on Covariate-Recalibrated Production Run
+    # 4. Certificate for the covariate-drift run, signed with a throwaway key
+    signing_key = Ed25519PrivateKey.generate()
     certificate = generate_governance_certificate(
         model_id="CREDIT-UNDERWRITER-V4.2",
         model_version="2026.10-SR117",
         drift_result=drift_covariate,
         conformal_result=conformal_res,
         fairness_result=fairness_res,
+        signing_key=signing_key,
         issued_at_utc="2026-10-22T09:30:00Z",
     )
-    signature_valid = verify_certificate_signature(certificate)
+    signature_valid = verify_certificate_signature(certificate, signing_key.public_key())
 
     assertions = {
         "clean_no_drift_verified": drift_clean.regime == "NO_DRIFT"

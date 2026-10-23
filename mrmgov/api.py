@@ -12,9 +12,12 @@ Endpoints:
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Dict, List, Optional, Union
 import numpy as np
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
@@ -22,7 +25,7 @@ from pydantic import BaseModel, Field
 from .drift import analyze_drift
 from .conformal import MondrianConformalPredictor
 from .fairness import repair_group_thresholds
-from .report import generate_governance_certificate, verify_certificate_signature
+from .report import generate_governance_certificate
 from .bench import run_benchmark_suite
 
 
@@ -36,6 +39,12 @@ app = FastAPI(
 )
 
 CONSOLE_PATH = Path(__file__).resolve().parent.parent / "web" / "console.html"
+
+# MRMGOV_SIGNING_KEY = 64 hex chars (Ed25519 seed). Unset: a new key per process, so
+# certificates from an earlier run can't be checked against GET /public-key.
+_seed = os.environ.get("MRMGOV_SIGNING_KEY")
+SIGNING_KEY = Ed25519PrivateKey.from_private_bytes(bytes.fromhex(_seed)) if _seed else Ed25519PrivateKey.generate()
+PUBLIC_KEY_HEX = SIGNING_KEY.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw).hex()
 
 
 class AuditRequest(BaseModel):
@@ -98,6 +107,12 @@ def health_check() -> Dict[str, object]:
         "port": 8019,
         "frameworks": ["FED_OCC_SR_11_7", "RBI_MRM_2024", "ECOA_REG_B_FOUR_FIFTHS"],
     }
+
+
+@app.get("/public-key")
+def get_public_key() -> Dict[str, str]:
+    """Ed25519 key that signs certificates; fetch it once and pin it, don't trust it per-response."""
+    return {"algorithm": "Ed25519", "public_key": PUBLIC_KEY_HEX}
 
 
 @app.post("/audit")
@@ -174,6 +189,7 @@ def post_audit(req: AuditRequest) -> Dict[str, object]:
             drift_result=drift_res,
             conformal_result=conformal_res,
             fairness_result=fairness_res,
+            signing_key=SIGNING_KEY,
         )
 
         return {
@@ -181,7 +197,6 @@ def post_audit(req: AuditRequest) -> Dict[str, object]:
             "conformal": conformal_res.to_dict(),
             "fairness": fairness_res.to_dict(),
             "certificate": cert.to_dict(),
-            "signature_verified": verify_certificate_signature(cert),
         }
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

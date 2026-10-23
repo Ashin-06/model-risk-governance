@@ -7,6 +7,7 @@ from __future__ import annotations
 import copy
 import numpy as np
 import pytest
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey, Ed25519PublicKey
 from fastapi.testclient import TestClient
 
 from mrmgov.drift import (
@@ -17,7 +18,7 @@ from mrmgov.drift import (
 )
 from mrmgov.conformal import MondrianConformalPredictor
 from mrmgov.fairness import compute_fairness_metrics, repair_group_thresholds
-from mrmgov.report import generate_governance_certificate, verify_certificate_signature
+from mrmgov.report import GovernanceCertificate, generate_governance_certificate, verify_certificate_signature
 from mrmgov.bench import run_benchmark_suite
 from mrmgov.api import app
 from mrmgov.__main__ import main as cli_main
@@ -194,19 +195,41 @@ def test_governance_certificate_hash_chain_and_tamper_detection() -> None:
     conf_res = cp.predict(probs, groups, y_test=y_prod)
     fair_res = repair_group_thresholds(probs, y_prod, groups)
 
+    key = Ed25519PrivateKey.generate()
+    pub = key.public_key()
     cert = generate_governance_certificate(
         model_id="TEST-MODEL-19",
         model_version="1.0.0",
         drift_result=drift_res,
         conformal_result=conf_res,
         fairness_result=fair_res,
+        signing_key=key,
     )
-    assert verify_certificate_signature(cert) is True
+    assert verify_certificate_signature(cert, pub) is True
 
-    # Tamper with fairness summary and verify signature check fails
+    # Edited summary or disposition fails
     tampered = copy.deepcopy(cert)
     tampered.fairness_summary["repaired_dir"] = 0.999999
-    assert verify_certificate_signature(tampered) is False
+    assert verify_certificate_signature(tampered, pub) is False
+    tampered = copy.deepcopy(cert)
+    tampered.overall_disposition = "AUTOMATED_CHECKS_PASSED" if cert.overall_disposition != "AUTOMATED_CHECKS_PASSED" else "CHECKS_FAILED"
+    assert verify_certificate_signature(tampered, pub) is False
+
+    # Recomputing every hash doesn't help without the signing key
+    forged = generate_governance_certificate(
+        model_id="TEST-MODEL-19",
+        model_version="1.0.0",
+        drift_result=drift_res,
+        conformal_result=conf_res,
+        fairness_result=fair_res,
+        signing_key=Ed25519PrivateKey.generate(),
+        issued_at_utc=cert.issued_at_utc,
+    )
+    assert forged.certificate_root_hash == cert.certificate_root_hash
+    assert verify_certificate_signature(forged, pub) is False
+    tampered = copy.deepcopy(cert)
+    tampered.signature = "zz"
+    assert verify_certificate_signature(tampered, pub) is False
 
 
 def test_fastapi_endpoints_and_cli() -> None:
@@ -270,7 +293,9 @@ def test_fastapi_endpoints_and_cli() -> None:
         },
     )
     assert r_audit.status_code == 200
-    assert r_audit.json()["signature_verified"] is True
+    pub = Ed25519PublicKey.from_public_bytes(bytes.fromhex(client.get("/public-key").json()["public_key"]))
+    cert = GovernanceCertificate(**r_audit.json()["certificate"])
+    assert verify_certificate_signature(cert, pub) is True
 
     # Test CLI benchmark command
     exit_code = cli_main(["bench"])
