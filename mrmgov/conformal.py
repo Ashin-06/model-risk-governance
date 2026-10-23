@@ -7,12 +7,17 @@ or risk segment group g at target miscoverage rate alpha using the finite-sample
 order statistic ceil((n_g + 1) * (1 - alpha)) / n_g.
 
 Produces prediction sets C(x) subset of {0, 1}:
-  - {0}    -> AUTO_APPROVE (guaranteed high confidence non-default)
-  - {1}    -> AUTO_DECLINE (guaranteed high confidence default/fraud)
-  - {0, 1} -> ABSTAIN_HUMAN_UNDERWRITER (ambiguous region routed to human review)
+  - {0}    -> AUTO_APPROVE (only label 0 = non-default is plausible at level alpha)
+  - {1}    -> AUTO_DECLINE (only label 1 = default/fraud is plausible at level alpha)
+  - {0, 1} -> ABSTAIN_HUMAN_UNDERWRITER (both plausible; routed to human review)
 
-Guarantees finite-sample group-conditional marginal coverage:
-  P(Y in C(X) | G = g) >= 1 - alpha   for all groups g.
+If calibration and test points within a group are exchangeable, coverage holds on
+average over draws of the calibration set:
+  P(Y in C(X) | G = g) >= 1 - alpha   for every group g seen in calibration.
+This is a statement about the set containing the true label, not about any single
+decision being right: every miss is a singleton, so a {0} set can still be a default.
+Exchangeability fails under drift, and groups unseen in calibration fall back to the
+pooled threshold, which carries no per-group guarantee.
 """
 
 from __future__ import annotations
@@ -109,9 +114,11 @@ class MondrianConformalPredictor:
         if n == 0:
             raise ValueError("Cannot calibrate conformal quantile on empty score array.")
         raw_k = math.ceil((n + 1) * (1.0 - alpha))
-        q_level = min(1.0, raw_k / float(n))
-        k_idx = min(n, max(1, raw_k)) - 1
-        return float(s[k_idx]), float(q_level)
+        if raw_k > n:
+            # Too few calibration points for this alpha: the quantile is +inf, so the set
+            # must hold both labels. Scores live in [0, 1], so q_hat = 1.0 does that.
+            return 1.0, 1.0
+        return float(s[raw_k - 1]), float(raw_k / float(n))
 
     def fit(
         self,
@@ -158,6 +165,10 @@ class MondrianConformalPredictor:
         """
         Produce Mondrian prediction sets C(x) subset of {0, 1} and underwriting routing decisions.
         If `y_test` is provided, also computes per-group empirical coverage and singleton accuracy.
+
+        A group's `is_valid_coverage` is False when its empirical coverage falls below target
+        by more than max(coverage_tolerance, 2.33 binomial standard errors of n_eval), i.e.
+        roughly a one-sided 1% test on test-set noise alone (calibration noise is ignored).
         """
         if not self.group_q_hat_:
             raise RuntimeError("MondrianConformalPredictor must be calibrated via .fit() first.")
@@ -266,7 +277,8 @@ class MondrianConformalPredictor:
                     )
                 else:
                     sing_acc_g = 1.0
-                is_valid = cov_g >= (target_cov - coverage_tolerance)
+                se_g = math.sqrt(target_cov * (1.0 - target_cov) / n_eval_g)
+                is_valid = cov_g >= target_cov - max(coverage_tolerance, 2.33 * se_g)
             else:
                 cov_g = target_cov
                 sing_acc_g = 1.0

@@ -117,30 +117,32 @@ def test_covariate_vs_concept_drift_decomposition_and_attribution() -> None:
 
 def test_mondrian_conformal_finite_sample_coverage_and_abstention() -> None:
     rng = np.random.default_rng(42)
-    n_cal, n_test = 2000, 2000
+    n_cal, n_test, n_repeats = 2000, 2000, 30
     groups_cal = ["prime"] * n_cal + ["subprime"] * n_cal
     groups_test = ["prime"] * n_test + ["subprime"] * n_test
 
-    p_cal_prime = 1.0 / (1.0 + np.exp(-rng.normal(-1.4, 2.2, size=n_cal)))
-    p_cal_sub = 1.0 / (1.0 + np.exp(-rng.normal(0.4, 2.1, size=n_cal)))
-    probs_cal = np.concatenate([p_cal_prime, p_cal_sub])
-    y_cal = rng.binomial(1, probs_cal).astype(int)
+    def draw(n: int) -> tuple[np.ndarray, np.ndarray]:
+        p_prime = 1.0 / (1.0 + np.exp(-rng.normal(-1.4, 2.2, size=n)))
+        p_sub = 1.0 / (1.0 + np.exp(-rng.normal(0.4, 2.1, size=n)))
+        probs = np.concatenate([p_prime, p_sub])
+        return probs, rng.binomial(1, probs).astype(int)
 
-    p_test_prime = 1.0 / (1.0 + np.exp(-rng.normal(-1.4, 2.2, size=n_test)))
-    p_test_sub = 1.0 / (1.0 + np.exp(-rng.normal(0.4, 2.1, size=n_test)))
-    probs_test = np.concatenate([p_test_prime, p_test_sub])
-    y_test = rng.binomial(1, probs_test).astype(int)
+    # One split's coverage is noisy (sd ~0.007 per group here), so check the
+    # average over fresh calibration/test splits against the guarantee
+    coverages: dict[str, list[float]] = {"prime": [], "subprime": []}
+    for _ in range(n_repeats):
+        probs_cal, y_cal = draw(n_cal)
+        probs_test, y_test = draw(n_test)
+        cp = MondrianConformalPredictor(alpha=0.05).fit(probs_cal, y_cal, groups_cal)
+        res = cp.predict(probs_test, groups_test, y_test=y_test)
+        for grp_rep in res.group_reports:
+            coverages[grp_rep.group_id].append(grp_rep.empirical_coverage)
+            expected_q_level = np.ceil((n_cal + 1) * 0.95) / n_cal
+            assert grp_rep.quantile_level == pytest.approx(expected_q_level, abs=1e-6)
 
-    cp = MondrianConformalPredictor(alpha=0.05)
-    cp.fit(probs_cal, y_cal, groups_cal)
-    res = cp.predict(probs_test, groups_test, y_test=y_test)
-
-    assert res.overall_coverage is not None and res.overall_coverage >= 0.945
-    for grp_rep in res.group_reports:
-        assert grp_rep.empirical_coverage >= 0.945
-        assert grp_rep.is_valid_coverage is True
-        expected_q_level = min(1.0, np.ceil((n_cal + 1) * 0.95) / n_cal)
-        assert grp_rep.quantile_level == pytest.approx(expected_q_level, abs=1e-6)
+    for covs in coverages.values():
+        # Continuous scores: 0.95 <= E[coverage] <= 0.95 + 1/(n+1); 3 se of the mean is ~0.004
+        assert 0.946 <= float(np.mean(covs)) <= 0.955
 
     # Verify routing semantics on extreme vs ambiguous probabilities
     probe_res = cp.predict([0.01, 0.99, 0.50], ["prime", "prime", "prime"])
@@ -150,6 +152,14 @@ def test_mondrian_conformal_finite_sample_coverage_and_abstention() -> None:
     assert probe_res.decisions[1] == "AUTO_DECLINE"
     assert probe_res.prediction_sets[2] == [0, 1]
     assert probe_res.decisions[2] == "ABSTAIN_HUMAN_UNDERWRITER"
+
+    # 10 calibration points can't support 95% coverage (ceil(11 * 0.95) = 11 > 10),
+    # so every set must contain both labels rather than use the 10th score
+    tiny = MondrianConformalPredictor(alpha=0.05).fit(
+        np.linspace(0.01, 0.30, 10), [0] * 10, ["g"] * 10
+    )
+    tiny_res = tiny.predict([0.01, 0.99], ["g", "g"])
+    assert tiny_res.prediction_sets == [[0, 1], [0, 1]]
 
 
 def test_ecoa_fairness_four_fifths_repair_and_profit_preservation() -> None:
