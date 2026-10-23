@@ -237,7 +237,7 @@ def test_fastapi_endpoints_and_cli() -> None:
 
     r_root = client.get("/")
     assert r_root.status_code == 200
-    assert "SR 11-7 / RBI Model Risk Governance" in r_root.text
+    assert "Model Risk Checks" in r_root.text
 
     r_health = client.get("/health")
     assert r_health.status_code == 200

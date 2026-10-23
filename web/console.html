@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>SR 11-7 / RBI Model Risk Governance Console — mrmgov</title>
+  <title>Model Risk Checks — mrmgov</title>
   <style>
     :root {
       --bg: #0b1020;
@@ -57,6 +57,14 @@
       font-size: 0.9rem;
     }
     .btn:hover { opacity: 0.92; }
+    #apiKey {
+      background: var(--bg);
+      color: var(--text);
+      border: 1px solid var(--border);
+      padding: 9px 12px;
+      border-radius: 8px;
+      margin-right: 8px;
+    }
     .grid {
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
@@ -102,20 +110,21 @@
 <body>
   <header>
     <div>
-      <h1>SR 11-7 / RBI Model Risk Governance Engine (mrmgov)</h1>
+      <h1>Model Risk Checks (mrmgov)</h1>
       <div class="subtitle">
-        Covariate vs Concept Drift Attribution • Mondrian Conformal Abstention • ECOA Four-Fifths Fair-Lending Repair
+        Covariate vs Concept Drift Attribution • Mondrian Conformal Abstention • Group Fairness Metrics • all on generated data
       </div>
     </div>
     <div>
-      <button class="btn" onclick="loadBench()">Run Live SR 11-7 Benchmark</button>
+      <input type="password" id="apiKey" placeholder="X-API-Key (if set)" autocomplete="off" />
+      <button class="btn" onclick="loadBench()">Run Benchmark</button>
     </div>
   </header>
 
   <div class="grid">
     <div class="card">
       <h2>1. Covariate vs Concept Drift Attribution</h2>
-      <div id="drift-summary">Click "Run Live SR 11-7 Benchmark" to inspect feature PSI, KS, Wasserstein-1 & attribution shares.</div>
+      <div id="drift-summary">Click "Run Benchmark" to inspect feature PSI, KS, Wasserstein-1 & attribution shares.</div>
       <table id="drift-table" style="margin-top:12px;">
         <thead>
           <tr>
@@ -148,26 +157,37 @@
     </div>
 
     <div class="card">
-      <h2>3. ECOA Four-Fifths Fair-Lending Repair</h2>
-      <div id="fairness-summary">Constrained group-threshold optimization maximizing bank profit subject to DIR ≥ 0.80 & |EOD| ≤ 0.03.</div>
+      <h2>3. Group-Threshold Search (diagnostic)</h2>
+      <div id="fairness-summary">Per-group thresholds maximizing profit subject to DIR ≥ 0.80 & |EOD| ≤ 0.03.</div>
+      <p class="subtitle">Separate cut-offs per protected group are disparate treatment under ECOA / Reg B, and the 0.80 ratio is not a lending safe harbour. This shows how far apart the groups' scores are; it is not a remediation.</p>
     </div>
   </div>
 
   <div class="card">
-    <h2>4. Hash-Chained SR 11-7 / RBI Model Governance Certificate</h2>
+    <h2>4. Signed Certificate (automated checks only, not a model approval)</h2>
     <div id="cert-box" class="mono">Awaiting benchmark execution...</div>
   </div>
 
   <script>
+    function esc(v) {
+      return String(v).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+    }
+
     async function loadBench() {
-      const res = await fetch('/bench');
+      const key = document.getElementById('apiKey').value;
+      const res = await fetch('/bench', key ? { headers: { 'X-API-Key': key } } : {});
+      if (!res.ok) {
+        document.getElementById('drift-summary').textContent =
+          res.status === 401 ? 'This server needs an API key: enter it above and run again.' : `Request failed (${res.status}).`;
+        return;
+      }
       const data = await res.json();
 
       const cov = data.drift_scenarios.covariate_drift;
       const conc = data.drift_scenarios.concept_drift;
       document.getElementById('drift-summary').innerHTML = `
-        <div class="kpi-row"><span>Covariate Shift Scenario:</span><span class="warn">${cov.regime} (${cov.covariate_drifted_features.join(', ')})</span></div>
-        <div class="kpi-row"><span>Concept Shift Scenario:</span><span class="fail">${conc.regime} (${conc.concept_drifted_features.join(', ')})</span></div>
+        <div class="kpi-row"><span>Covariate Shift Scenario:</span><span class="warn">${esc(cov.regime)} (${esc(cov.covariate_drifted_features.join(', '))})</span></div>
+        <div class="kpi-row"><span>Concept Shift Scenario:</span><span class="fail">${esc(conc.regime)} (${esc(conc.concept_drifted_features.join(', '))})</span></div>
         <div class="kpi-row"><span>Additive ΔBrier (Cov + Concept):</span><span class="mono">${cov.delta_brier_covariate.toFixed(4)} + ${cov.delta_brier_concept.toFixed(4)} = ${cov.delta_brier_total.toFixed(4)}</span></div>
       `;
 
@@ -176,53 +196,56 @@
       cov.feature_metrics.forEach(m => {
         const tr = document.createElement('tr');
         tr.innerHTML = `
-          <td class="mono">${m.feature_name}</td>
+          <td class="mono">${esc(m.feature_name)}</td>
           <td>${m.psi.toFixed(4)}</td>
           <td>${m.ks_stat.toFixed(4)}</td>
           <td>${(m.covariate_attribution_share * 100).toFixed(1)}%</td>
-          <td class="${m.is_drifted ? 'warn' : 'pass'}">${m.drift_mode}</td>
+          <td class="${m.is_drifted ? 'warn' : 'pass'}">${esc(m.drift_mode)}</td>
         `;
         tbody.appendChild(tr);
       });
 
       const conf = data.conformal.result;
+      const meanCov = Object.values(data.conformal.mean_group_coverage);
       document.getElementById('conformal-summary').innerHTML = `
         <div class="kpi-row"><span>Target Coverage (1 - α):</span><span>${(conf.target_coverage * 100).toFixed(1)}%</span></div>
-        <div class="kpi-row"><span>Overall Empirical Coverage:</span><span class="pass">${(conf.overall_coverage * 100).toFixed(2)}%</span></div>
-        <div class="kpi-row"><span>Singleton Accuracy ({0} / {1}):</span><span class="pass">${(conf.overall_singleton_accuracy * 100).toFixed(2)}%</span></div>
+        <div class="kpi-row"><span>Mean group coverage, ${data.conformal.n_splits} splits:</span><span class="pass">${(Math.min(...meanCov) * 100).toFixed(2)}–${(Math.max(...meanCov) * 100).toFixed(2)}%</span></div>
+        <div class="kpi-row"><span>Singleton Accuracy ({0} / {1}, first split):</span><span>${(conf.overall_singleton_accuracy * 100).toFixed(2)}%</span></div>
       `;
       const ctbody = document.querySelector('#conformal-table tbody');
       ctbody.innerHTML = '';
       conf.group_reports.forEach(g => {
         const tr = document.createElement('tr');
         tr.innerHTML = `
-          <td class="mono">${g.group_id}</td>
+          <td class="mono">${esc(g.group_id)}</td>
           <td>${g.q_hat.toFixed(4)}</td>
-          <td class="pass">${(g.empirical_coverage * 100).toFixed(2)}%</td>
+          <td>${(g.empirical_coverage * 100).toFixed(2)}%</td>
           <td>${(g.abstention_rate * 100).toFixed(1)}%</td>
-          <td class="pass">${g.is_valid_coverage ? 'VALID (≥94.5%)' : 'BREACH'}</td>
+          <td class="${g.is_valid_coverage ? 'pass' : 'fail'}">${g.is_valid_coverage ? 'OK' : 'BELOW TARGET'}</td>
         `;
         ctbody.appendChild(tr);
       });
 
       const f = data.fairness;
+      const dirClass = d => d >= 0.8 ? 'pass' : 'fail';
       document.getElementById('fairness-summary').innerHTML = `
-        <div class="kpi-row"><span>Baseline Disparate Impact (DIR):</span><span class="fail">${f.baseline.disparate_impact_ratio.toFixed(4)} (Non-Compliant)</span></div>
-        <div class="kpi-row"><span>Repaired Disparate Impact (DIR):</span><span class="pass">${f.repaired.disparate_impact_ratio.toFixed(4)} (ECOA Compliant ≥ 0.80)</span></div>
-        <div class="kpi-row"><span>Equal Opportunity Diff (EOD):</span><span class="pass">${f.baseline.equal_opportunity_diff.toFixed(4)} → ${f.repaired.equal_opportunity_diff.toFixed(4)}</span></div>
-        <div class="kpi-row"><span>Optimal Thresholds (t_priv*, t_unpriv*):</span><span class="mono">(${f.repaired.threshold_privileged.toFixed(3)}, ${f.repaired.threshold_unprivileged.toFixed(3)})</span></div>
-        <div class="kpi-row"><span>ROC-AUC Retention:</span><span class="pass">${(f.auc_retention_ratio * 100).toFixed(2)}%</span></div>
-        <div class="kpi-row"><span>Expected Profit Retention:</span><span class="pass">${(f.profit_retention_ratio * 100).toFixed(2)}%</span></div>
+        <div class="kpi-row"><span>Baseline Disparate Impact (DIR):</span><span class="${dirClass(f.baseline.disparate_impact_ratio)}">${f.baseline.disparate_impact_ratio.toFixed(4)}</span></div>
+        <div class="kpi-row"><span>DIR with group thresholds:</span><span class="${dirClass(f.repaired.disparate_impact_ratio)}">${f.repaired.disparate_impact_ratio.toFixed(4)}</span></div>
+        <div class="kpi-row"><span>Equal Opportunity Diff (EOD):</span><span>${f.baseline.equal_opportunity_diff.toFixed(4)} → ${f.repaired.equal_opportunity_diff.toFixed(4)}</span></div>
+        <div class="kpi-row"><span>Thresholds (t_priv*, t_unpriv*):</span><span class="mono">(${f.repaired.threshold_privileged.toFixed(3)}, ${f.repaired.threshold_unprivileged.toFixed(3)})</span></div>
+        <div class="kpi-row"><span>ROC-AUC Retention:</span><span>${(f.auc_retention_ratio * 100).toFixed(2)}%</span></div>
+        <div class="kpi-row"><span>Expected Profit Retention:</span><span>${(f.profit_retention_ratio * 100).toFixed(2)}%</span></div>
       `;
 
       const c = data.certificate;
       document.getElementById('cert-box').innerHTML = `
-        <div><strong>Certificate ID:</strong> ${c.certificate_id} | <strong>Disposition:</strong> <span class="pass">${c.overall_disposition}</span></div>
-        <div><strong>Genesis Hash:</strong> ${c.hash_chain.genesis_header_hash}</div>
-        <div><strong>Drift Block:</strong>   ${c.hash_chain.drift_block_hash}</div>
-        <div><strong>Conformal:</strong>     ${c.hash_chain.conformal_block_hash}</div>
-        <div><strong>Fairness:</strong>      ${c.hash_chain.fairness_block_hash}</div>
-        <div><strong>Root Digest:</strong>   <span class="pass">${c.certificate_root_hash}</span></div>
+        <div><strong>Certificate ID:</strong> ${esc(c.certificate_id)} | <strong>Disposition:</strong> ${esc(c.overall_disposition)}</div>
+        <div><strong>Genesis Hash:</strong> ${esc(c.hash_chain.genesis_header_hash)}</div>
+        <div><strong>Drift Block:</strong>   ${esc(c.hash_chain.drift_block_hash)}</div>
+        <div><strong>Conformal:</strong>     ${esc(c.hash_chain.conformal_block_hash)}</div>
+        <div><strong>Fairness:</strong>      ${esc(c.hash_chain.fairness_block_hash)}</div>
+        <div><strong>Root Digest:</strong>   ${esc(c.certificate_root_hash)}</div>
+        <div><strong>Ed25519 signature:</strong> ${esc(c.signature)} (a throwaway key per benchmark run)</div>
       `;
     }
     window.addEventListener('DOMContentLoaded', loadBench);
