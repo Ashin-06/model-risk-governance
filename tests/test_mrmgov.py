@@ -17,7 +17,7 @@ from mrmgov.drift import (
     analyze_drift,
 )
 from mrmgov.conformal import MondrianConformalPredictor
-from mrmgov.fairness import compute_fairness_metrics, repair_group_thresholds
+from mrmgov.fairness import repair_group_thresholds
 from mrmgov.report import GovernanceCertificate, generate_governance_certificate, verify_certificate_signature
 from mrmgov.bench import run_benchmark_suite
 from mrmgov.api import app
@@ -289,10 +289,13 @@ def test_fastapi_endpoints_and_cli() -> None:
             "y_ref": y_r,
             "X_prod": X_p,
             "y_prod": y_p,
+            "groups_ref": [i % 2 for i in range(120)],
+            "groups_prod": [i % 2 for i in range(120)],
             "feature_names": ["f1", "f2", "f3"],
         },
     )
     assert r_audit.status_code == 200
+    assert r_audit.json()["drift"]["regime"] != "NO_DRIFT"  # X_prod mean shifted by 0.5
     pub = Ed25519PublicKey.from_public_bytes(bytes.fromhex(client.get("/public-key").json()["public_key"]))
     cert = GovernanceCertificate(**r_audit.json()["certificate"])
     assert verify_certificate_signature(cert, pub) is True
@@ -300,3 +303,41 @@ def test_fastapi_endpoints_and_cli() -> None:
     # Test CLI benchmark command
     exit_code = cli_main(["bench"])
     assert exit_code == 0
+
+
+def test_api_key_and_input_limits(monkeypatch: pytest.MonkeyPatch) -> None:
+    import mrmgov.api as api_mod
+
+    client = TestClient(app)
+    conf = {
+        "probs_calib": [0.1, 0.9], "y_calib": [0, 1], "groups_calib": ["A", "A"],
+        "probs_test": [0.2], "groups_test": ["A"],
+    }
+
+    monkeypatch.setattr(api_mod, "API_KEY", "s3cret")
+    assert client.post("/conformal/predict", json=conf).status_code == 401
+    assert client.post("/conformal/predict", json=conf, headers={"X-API-Key": "nope"}).status_code == 401
+    assert client.post("/conformal/predict", json=conf, headers={"X-API-Key": "s3cret"}).status_code == 200
+    assert client.get("/bench").status_code == 401
+    assert client.get("/health").status_code == 200
+    assert client.get("/public-key").status_code == 200
+    monkeypatch.setattr(api_mod, "API_KEY", None)
+
+    # Out-of-range probabilities, labels and oversized lists are 422s, not 500s
+    assert client.post("/conformal/predict", json={**conf, "probs_test": [1.5]}).status_code == 422
+    assert client.post("/conformal/predict", json={**conf, "y_calib": [0, 2]}).status_code == 422
+    big = {**conf, "probs_test": [0.5] * (api_mod.MAX_POINTS + 1), "groups_test": ["A"] * (api_mod.MAX_POINTS + 1)}
+    assert client.post("/conformal/predict", json=big).status_code == 422
+    nan_body = '{"X_ref": [[NaN]], "y_ref": [0], "X_prod": [[0]], "y_prod": [0], "groups_ref": [0], "groups_prod": [0]}'
+    r = client.post("/audit", content=nan_body, headers={"Content-Type": "application/json"})
+    assert r.status_code == 422
+    r = client.post("/fairness/repair", content=b"x" * (api_mod.MAX_BODY_BYTES + 1))
+    assert r.status_code == 413
+
+    # Ragged rows and mismatched lengths are 400s with a reason
+    rows = [[0.0, 1.0]] * 10
+    bad = {"X_ref": rows, "y_ref": [0, 1] * 5, "groups_ref": [0] * 10,
+           "X_prod": [[0.0]] * 4, "y_prod": [0, 1, 0, 1], "groups_prod": [0] * 4}
+    r = client.post("/audit", json=bad)
+    assert r.status_code == 400 and "same number of features" in r.json()["detail"]
+    assert client.get("/bench", params={"seed": -1}).status_code == 422
