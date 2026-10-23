@@ -115,14 +115,14 @@
   <div class="grid">
     <div class="card">
       <h2>1. Covariate vs Concept Drift Attribution</h2>
-      <div id="drift-summary">Click "Run Live SR 11-7 Benchmark" to inspect feature PSI, KS, Wasserstein-1 & Shapley shares.</div>
+      <div id="drift-summary">Click "Run Live SR 11-7 Benchmark" to inspect feature PSI, KS, Wasserstein-1 & attribution shares.</div>
       <table id="drift-table" style="margin-top:12px;">
         <thead>
           <tr>
             <th>Feature</th>
             <th>PSI</th>
             <th>KS</th>
-            <th>Cov Shapley</th>
+            <th>Cov share</th>
             <th>Mode</th>
           </tr>
         </thead>
@@ -179,7 +179,7 @@
           <td class="mono">${m.feature_name}</td>
           <td>${m.psi.toFixed(4)}</td>
           <td>${m.ks_stat.toFixed(4)}</td>
-          <td>${(m.covariate_shapley_share * 100).toFixed(1)}%</td>
+          <td>${(m.covariate_attribution_share * 100).toFixed(1)}%</td>
           <td class="${m.is_drifted ? 'warn' : 'pass'}">${m.drift_mode}</td>
         `;
         tbody.appendChild(tr);

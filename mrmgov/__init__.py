@@ -2,7 +2,7 @@
 mrmgov: SR 11-7 / RBI Model Risk Management (MRM) Governance Engine.
 
 Provides:
-1. Covariate vs Concept Drift Decomposition & Per-Feature Attribution (PSI, KS, Wasserstein-1, Shapley).
+1. Covariate vs Concept Drift Decomposition & Per-Feature Attribution (PSI, KS, Wasserstein-1, heuristic shares).
 2. Mondrian (Group-Conditional) Split Conformal Prediction Abstention Layer.
 3. ECOA / Fair-Lending Disparate Impact Auditor & Constrained Threshold Repair (Four-Fifths Rule).
 4. SR 11-7 / RBI Hash-Chained Model Governance Audit Certificate & Benchmark Suite.

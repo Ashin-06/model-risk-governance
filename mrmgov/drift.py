@@ -1,13 +1,20 @@
 """
-Covariate vs Concept Drift Attribution Engine (SR 11-7 / RBI MRM Section 4).
+Covariate vs concept drift attribution.
 
 Implements:
-1. Per-feature Population Stability Index (PSI), Two-Sample Kolmogorov-Smirnov (KS)
+1. Per-feature Population Stability Index (PSI), two-sample Kolmogorov-Smirnov (KS)
    statistic & p-value, and 1D Wasserstein-1 (Earth Mover's) distance.
-2. Importance-Weighted Brier Score & Residual Shift Decomposition:
-   Separates pure input distribution shift P_prod(X) != P_ref(X) (Covariate Drift)
-   from conditional target relationship shift P_prod(Y|X) != P_ref(Y|X) (Concept Drift).
-3. Perturbation Shapley Feature Attribution for both Covariate and Concept Drift.
+2. Importance-weighted Brier decomposition: splits the change in Brier score into a
+   part explained by P(X) moving (covariate drift) and a remainder attributed to
+   P(Y|X) moving (concept drift). The density ratio comes from a linear logistic
+   domain classifier, so it captures shifts a linear boundary can see (mainly mean
+   shifts); the split is only as good as that ratio.
+3. Per-feature attribution shares. These are heuristics, not Shapley values:
+   - covariate share: mean |prediction change| when feature j alone is quantile-mapped
+     onto its production distribution, plus 0.25 * PSI_j + 0.15 * normalised W1_j,
+     normalised to sum to 1 (one feature at a time, so interactions are ignored);
+   - concept share: change in the covariance of standardised feature j with the model
+     residual, normalised to sum to 1.
 """
 
 from __future__ import annotations
@@ -27,9 +34,9 @@ class FeatureDriftMetric:
     ks_pvalue: float
     wasserstein_1d: float
     wasserstein_norm: float
-    covariate_shapley_share: float
+    covariate_attribution_share: float
     concept_slope_shift: float
-    concept_shapley_share: float
+    concept_attribution_share: float
     status: str  # "STABLE" | "MODERATE" | "CRITICAL"
     is_covariate_drifted: bool
     is_concept_drifted: bool
@@ -246,7 +253,8 @@ def analyze_drift(
 
     Separates:
     - Covariate shift P_prod(X) != P_ref(X) via PSI, KS, Wasserstein-1, domain
-      discriminator AUC, importance-weighted Brier shift, and interventional Shapley.
+      discriminator AUC, importance-weighted Brier shift, and a one-at-a-time
+      perturbation share per feature.
     - Concept shift P_prod(Y|X) != P_ref(Y|X) via importance-weighted residual Brier
       decomposition and per-feature partial residual slope shift.
     """
@@ -327,7 +335,7 @@ def analyze_drift(
     res_prod = y_prod - p_prod
     residual_calibration_shift = float(abs(np.mean(res_prod) - np.mean(res_ref)))
 
-    # 3. Per-feature PSI, KS, Wasserstein, Perturbation Shapley, and Concept Slope Shift
+    # 3. Per-feature PSI, KS, Wasserstein, perturbation share and concept slope shift
     psi_list: List[float] = []
     ks_list: List[Tuple[float, float]] = []
     w1_list: List[Tuple[float, float]] = []
@@ -364,14 +372,14 @@ def analyze_drift(
         concept_slope_shifts[j] = abs(slope_prod_j - slope_ref_j)
 
     cov_total = float(np.sum(cov_raw_contrib))
-    cov_shapley = (
+    cov_share = (
         cov_raw_contrib / cov_total
         if cov_total > 1e-12
         else np.full(n_features, 1.0 / n_features)
     )
 
     concept_total = float(np.sum(concept_slope_shifts))
-    concept_shapley = (
+    concept_share = (
         concept_slope_shifts / concept_total
         if concept_total > 1e-12
         else np.full(n_features, 1.0 / n_features)
@@ -424,9 +432,9 @@ def analyze_drift(
                 ks_pvalue=round(ksp_j, 6),
                 wasserstein_1d=round(w1_j, 6),
                 wasserstein_norm=round(w1_norm_j, 6),
-                covariate_shapley_share=round(float(cov_shapley[j]), 6),
+                covariate_attribution_share=round(float(cov_share[j]), 6),
                 concept_slope_shift=round(c_slope_j, 6),
-                concept_shapley_share=round(float(concept_shapley[j]), 6),
+                concept_attribution_share=round(float(concept_share[j]), 6),
                 status=status,
                 is_covariate_drifted=is_cov,
                 is_concept_drifted=is_conc,
@@ -458,27 +466,25 @@ def analyze_drift(
     if has_cov and has_conc:
         regime = "COMPOUND_DRIFT"
         recommended_action = (
-            "FULL_RETRAINING_REQUIRED: Both P(X) and P(Y|X) have shifted. "
-            "Quarantine automated decisions via Mondrian Conformal Abstention and re-estimate parameters."
+            "INVESTIGATE_AND_RETRAIN: both P(X) and P(Y|X) appear to have shifted; "
+            "consider routing more decisions to review while the model is re-estimated."
         )
     elif has_cov:
         regime = "COVARIATE_DRIFT"
         recommended_action = (
-            "IMPORTANCE_REWEIGHT_AND_RECALIBRATE: Input population P(X) shifted while "
-            "conditional credit relationship P(Y|X) remains intact. Apply density-ratio "
-            "reweighting and recalibrate Mondrian conformal quantiles."
+            "REWEIGHT_AND_RECALIBRATE: P(X) shifted with no sign of P(Y|X) shifting; "
+            "consider density-ratio reweighting and recalibrating the conformal quantiles."
         )
     elif has_conc:
         regime = "CONCEPT_DRIFT"
         recommended_action = (
-            "MODEL_REDEVELOPMENT_SR11_7: Structural relationship P(Y|X) broke down despite "
-            "stable marginal feature distributions P(X). Trigger Tier-1 Model Risk escalation."
+            "ESCALATE_FOR_REDEVELOPMENT: P(Y|X) appears to have shifted while feature "
+            "distributions look stable; escalate under the model risk policy."
         )
     else:
         regime = "NO_DRIFT"
         recommended_action = (
-            "CONTINUE_PRODUCTION_MONITORING: Feature distributions and conditional "
-            "calibration are within SR 11-7 / RBI tolerances."
+            "CONTINUE_MONITORING: drift metrics are within the configured thresholds."
         )
 
     return DriftDecompositionResult(

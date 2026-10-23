@@ -96,7 +96,7 @@ def test_covariate_vs_concept_drift_decomposition_and_attribution() -> None:
         assert d["delta_brier_covariate"] + d["delta_brier_concept"] == pytest.approx(
             d["delta_brier_total"], abs=1e-5
         )
-        cov_shares = [m["covariate_shapley_share"] for m in d["feature_metrics"]]
+        cov_shares = [m["covariate_attribution_share"] for m in d["feature_metrics"]]
         assert sum(cov_shares) == pytest.approx(1.0, abs=1e-4)
 
     # 100% identification of injected covariate-drifted features
