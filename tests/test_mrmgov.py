@@ -167,13 +167,13 @@ def test_ecoa_fairness_four_fifths_repair_and_profit_preservation() -> None:
     fair = bench["fairness"]
 
     assert fair["baseline"]["disparate_impact_ratio"] < 0.65
-    assert fair["baseline"]["four_fifths_compliant"] is False
+    assert fair["baseline"]["dir_meets_four_fifths"] is False
 
     assert fair["repaired"]["disparate_impact_ratio"] >= 0.82
     assert abs(fair["repaired"]["equal_opportunity_diff"]) <= 0.03
-    assert fair["repaired"]["four_fifths_compliant"] is True
-    assert fair["repaired"]["eod_compliant"] is True
-    assert fair["repaired"]["overall_compliant"] is True
+    assert fair["repaired"]["dir_meets_four_fifths"] is True
+    assert fair["repaired"]["eod_within_limit"] is True
+    assert fair["repaired"]["meets_all_targets"] is True
 
     assert fair["auc_retention_ratio"] >= 0.97
     assert fair["profit_retention_ratio"] >= 0.97

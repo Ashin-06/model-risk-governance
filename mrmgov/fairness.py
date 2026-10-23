@@ -1,27 +1,33 @@
 """
-ECOA / Fair-Lending Disparate Impact Auditor & Constrained Threshold Repair Engine.
+Group fairness metrics and a group-threshold search.
 
 Implements:
 1. Disparate Impact Ratio (DIR = P(Y_hat=1 | G=unpriv) / P(Y_hat=1 | G=priv)),
    Statistical Parity Difference (SPD), Equal Opportunity Difference (EOD),
    and Average Odds Difference (AOD).
-2. Vectorized Constrained Group-Threshold Optimization:
-   Finds optimal group thresholds (t_priv*, t_unpriv*) that maximize expected
-   bank lending profit / F1 subject to:
-     - ECOA Four-Fifths Rule: DIR >= min_dir (default 0.80, target >= 0.82)
-     - Equal Opportunity Parity: |EOD| <= max_abs_eod (default 0.03)
+2. A grid search for per-group thresholds (t_priv*, t_unpriv*) that maximize
+   expected profit + F1 subject to DIR >= min_dir (default 0.80, the "four-fifths"
+   ratio from the EEOC Uniform Guidelines, 29 CFR 1607.4(D)) and |EOD| <= max_abs_eod.
+
+Legal caveat. Meeting these numbers is not ECOA / Regulation B compliance. US
+fair-lending law has no 80% safe harbour, and applying different cut-offs to
+applicants because of a protected characteristic is disparate treatment
+(12 CFR 1002.4(a)) even when it narrows a disparity. The threshold search is a
+diagnostic: it shows how far apart the groups' score distributions are. A
+remediation for a protected attribute would normally look for a less
+discriminatory model that applies one rule to everyone.
 """
 
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
-from typing import Dict, Optional, Sequence, Tuple, Union
+from typing import Dict, Sequence, Union
 import numpy as np
 
 
 @dataclass
 class FairnessMetrics:
-    """Comprehensive ECOA / Fair-Lending audit metrics."""
+    """Group fairness metrics at the given thresholds."""
 
     threshold_privileged: float
     threshold_unprivileged: float
@@ -39,9 +45,9 @@ class FairnessMetrics:
     accuracy: float
     expected_profit: float
     roc_auc: float
-    four_fifths_compliant: bool
-    eod_compliant: bool
-    overall_compliant: bool
+    dir_meets_four_fifths: bool
+    eod_within_limit: bool
+    meets_all_targets: bool
 
     def to_dict(self) -> Dict[str, object]:
         return asdict(self)
@@ -49,7 +55,7 @@ class FairnessMetrics:
 
 @dataclass
 class FairnessRepairResult:
-    """Before/after comparison of Constrained Group-Threshold Fair-Lending Repair."""
+    """Before/after comparison for the group-threshold search."""
 
     baseline: FairnessMetrics
     repaired: FairnessMetrics
@@ -108,8 +114,8 @@ def compute_fairness_metrics(
     max_abs_eod: float = 0.03,
 ) -> FairnessMetrics:
     """
-    Compute ECOA Disparate Impact Ratio, Equal Opportunity Difference, Average Odds
-    Difference, F1, ROC-AUC, and Expected Bank Profit.
+    Compute Disparate Impact Ratio, Equal Opportunity Difference, Average Odds
+    Difference, F1, ROC-AUC, and expected profit.
 
     Convention:
       - `scores` in [0, 1]: probability of creditworthiness / loan repayment (Y = 1).
@@ -190,9 +196,9 @@ def compute_fairness_metrics(
         accuracy=round(acc_val, 6),
         expected_profit=round(profit_val, 6),
         roc_auc=round(auc_val, 6),
-        four_fifths_compliant=four_fifths_ok,
-        eod_compliant=eod_ok,
-        overall_compliant=bool(four_fifths_ok and eod_ok),
+        dir_meets_four_fifths=four_fifths_ok,
+        eod_within_limit=eod_ok,
+        meets_all_targets=bool(four_fifths_ok and eod_ok),
     )
 
 
@@ -211,10 +217,12 @@ def repair_group_thresholds(
     grid_size: int = 240,
 ) -> FairnessRepairResult:
     """
-    Solve constrained group-threshold optimization to find (t_priv*, t_unpriv*)
-    maximizing expected bank profit + F1 utility subject to:
-      1. ECOA Four-Fifths Rule: DIR >= max(min_dir, target_dir_floor) and DIR <= 1.25
-      2. Equal Opportunity Parity: |EOD| <= max_abs_eod
+    Grid-search per-group thresholds (t_priv*, t_unpriv*) maximizing expected profit
+    + F1 subject to:
+      1. max(min_dir, target_dir_floor) <= DIR <= 1.25
+      2. |EOD| <= max_abs_eod
+    Group-specific thresholds on a protected attribute are disparate treatment; see the
+    module docstring before using the result for anything but diagnosis.
     """
     s = np.asarray(scores, dtype=float).ravel()
     y = np.asarray(y_true, dtype=int).ravel()
@@ -245,8 +253,6 @@ def repair_group_thresholds(
     y_unpriv = y[unpriv_mask]
 
     n_total = float(s.size)
-    n_priv = float(s_priv.size)
-    n_unpriv = float(s_unpriv.size)
     n_priv_pos = max(float(np.sum(y_priv == 1)), 1.0)
     n_unpriv_pos = max(float(np.sum(y_unpriv == 1)), 1.0)
 
@@ -360,9 +366,9 @@ def repair_group_thresholds(
     auc_ret = repaired.roc_auc / baseline.roc_auc if baseline.roc_auc > 1e-8 else 1.0
 
     status = (
-        "ECOA_COMPLIANT_REPAIRED"
-        if repaired.overall_compliant
-        else "PARTIAL_REPAIR_REVIEW_REQUIRED"
+        "TARGETS_MET_WITH_GROUP_THRESHOLDS"
+        if repaired.meets_all_targets
+        else "TARGETS_NOT_MET"
     )
 
     return FairnessRepairResult(

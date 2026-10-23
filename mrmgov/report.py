@@ -119,9 +119,9 @@ def generate_governance_certificate(
         "profit_retention_ratio": fairness_result.profit_retention_ratio,
         "f1_retention_ratio": fairness_result.f1_retention_ratio,
         "auc_retention_ratio": fairness_result.auc_retention_ratio,
-        "four_fifths_compliant": fairness_result.repaired.four_fifths_compliant,
-        "eod_compliant": fairness_result.repaired.eod_compliant,
-        "overall_compliant": fairness_result.repaired.overall_compliant,
+        "dir_meets_four_fifths": fairness_result.repaired.dir_meets_four_fifths,
+        "eod_within_limit": fairness_result.repaired.eod_within_limit,
+        "meets_all_targets": fairness_result.repaired.meets_all_targets,
         "status": fairness_result.status,
     }
 
@@ -135,8 +135,8 @@ def generate_governance_certificate(
         "no_unmitigated_concept_drift": drift_result.regime
         not in ("CONCEPT_DRIFT", "COMPOUND_DRIFT"),
         "mondrian_conformal_coverage_verified": bool(all_groups_covered),
-        "ecoa_four_fifths_compliant": bool(fairness_result.repaired.four_fifths_compliant),
-        "equal_opportunity_compliant": bool(fairness_result.repaired.eod_compliant),
+        "dir_meets_four_fifths": bool(fairness_result.repaired.dir_meets_four_fifths),
+        "eod_within_limit": bool(fairness_result.repaired.eod_within_limit),
         "utility_retention_above_97pct": bool(
             max(
                 fairness_result.auc_retention_ratio,
@@ -156,12 +156,12 @@ def generate_governance_certificate(
     if (
         checklist["no_unmitigated_concept_drift"]
         and checklist["mondrian_conformal_coverage_verified"]
-        and checklist["ecoa_four_fifths_compliant"]
+        and checklist["dir_meets_four_fifths"]
     ):
         disposition = "APPROVED_FOR_PRODUCTION"
     elif (
         checklist["mondrian_conformal_coverage_verified"]
-        and checklist["ecoa_four_fifths_compliant"]
+        and checklist["dir_meets_four_fifths"]
     ):
         disposition = "CONDITIONAL_APPROVAL_WITH_GUARDRAILS"
     else:
