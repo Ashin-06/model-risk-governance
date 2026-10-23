@@ -1,12 +1,17 @@
 """
-SR 11-7 / RBI Model Risk Governance Benchmark Suite.
+Benchmark on generated data. Nothing here is real credit data.
 
-Generates realistic synthetic credit underwriting cohorts and verifies:
-1. 100% precision/recall identification of injected Covariate vs Concept drifted features.
-2. >= 94.5% empirical coverage across every demographic segment via Mondrian Split Conformal Prediction.
-3. ECOA Disparate Impact Ratio repair from < 0.65 (non-compliant) to >= 0.82 (compliant)
-   with |EOD| <= 0.03 while preserving > 97% of baseline ROC-AUC and expected bank profit.
-4. Cryptographic SHA-256 hash-chain verification of the SR 11-7 Governance Certificate.
+Each scenario is drawn from a known data-generating process, so these are
+consistency checks that the code finds what was planted, not accuracy measurements:
+1. Drift: a no-drift sample, a mean shift on two features (covariate drift) and two
+   flipped coefficients (concept drift); checks the flagged features match.
+2. Conformal: three synthetic score cohorts; checks mean per-group coverage over
+   repeated calibration/test splits against the 1 - alpha guarantee.
+3. Fairness: a legacy score shifted down for one group; checks the baseline is under
+   the 0.80 ratio and the group-threshold search finds thresholds meeting DIR >= 0.82
+   and |EOD| <= 0.03. The bias is a constant logit shift, which a threshold shift
+   undoes exactly, so the search succeeding is expected by construction.
+4. Certificate: hash chain and signature verify.
 """
 
 from __future__ import annotations
@@ -101,51 +106,45 @@ def run_benchmark_suite(seed: int = 42) -> Dict[str, object]:
     conc_exact_match = set(drift_concept.concept_drifted_features) == injected_conc
 
     # 2. Mondrian Group-Conditional Split Conformal Prediction Benchmark
-    # Three credit cohorts with distinct base risk & heteroscedastic uncertainty
-    group_names = ["group_A_prime", "group_B_near_prime", "group_C_thin_file"]
-    n_per_group_cal = 1200
-    n_per_group_test = 1200
-
-    probs_cal_list, y_cal_list, g_cal_list = [], [], []
-    probs_test_list, y_test_list, g_test_list = [], [], []
-
+    # Three synthetic score cohorts with different base rates; scores are calibrated
+    # by construction (y ~ Bernoulli(p)), so this tests the conformal layer only
     group_params = {
         "group_A_prime": (-1.65, 2.35),
         "group_B_near_prime": (-0.65, 2.25),
         "group_C_thin_file": (0.35, 2.15),
     }
+    n_per_group = 1200
+    groups_split = [grp for grp in group_params for _ in range(n_per_group)]
 
-    for grp in group_names:
-        loc_g, scale_g = group_params[grp]
-        # Calibration split
-        logits_cal = rng.normal(loc=loc_g, scale=scale_g, size=n_per_group_cal)
-        p_cal = _sigmoid(logits_cal)
-        y_cal_g = rng.binomial(1, p_cal).astype(int)
-        probs_cal_list.append(p_cal)
-        y_cal_list.append(y_cal_g)
-        g_cal_list.extend([grp] * n_per_group_cal)
+    def draw_split() -> tuple[np.ndarray, np.ndarray]:
+        p = np.concatenate([_sigmoid(rng.normal(loc, scale, size=n_per_group))
+                            for loc, scale in group_params.values()])
+        return p, rng.binomial(1, p).astype(int)
 
-        # Exchangeable test split
-        logits_test = rng.normal(loc=loc_g, scale=scale_g, size=n_per_group_test)
-        p_test = _sigmoid(logits_test)
-        y_test_g = rng.binomial(1, p_test).astype(int)
-        probs_test_list.append(p_test)
-        y_test_list.append(y_test_g)
-        g_test_list.extend([grp] * n_per_group_test)
+    # One split's coverage has sd ~0.009 per group here, so a single draw can't
+    # confirm a 95% guarantee; average over repeated calibration/test splits instead
+    n_splits = 50
+    alpha = 0.05
+    split_coverages: Dict[str, list] = {grp: [] for grp in group_params}
+    conformal_res = None
+    for _ in range(n_splits):
+        probs_cal, y_cal = draw_split()
+        probs_test, y_test = draw_split()
+        mondrian = MondrianConformalPredictor(alpha=alpha).fit(probs_cal, y_cal, groups_split)
+        res = mondrian.predict(probs_test, groups_split, y_test=y_test)
+        conformal_res = conformal_res or res  # report the first split in full
+        for r in res.group_reports:
+            split_coverages[r.group_id].append(r.empirical_coverage)
 
-    probs_cal = np.concatenate(probs_cal_list)
-    y_cal = np.concatenate(y_cal_list)
-    probs_test = np.concatenate(probs_test_list)
-    y_test = np.concatenate(y_test_list)
-
-    mondrian = MondrianConformalPredictor(alpha=0.05)
-    mondrian.fit(probs_cal, y_cal, g_cal_list)
-    conformal_res = mondrian.predict(probs_test, g_test_list, y_test=y_test)
-
-    min_group_coverage = min(r.empirical_coverage for r in conformal_res.group_reports)
-    all_groups_above_945 = all(
-        r.empirical_coverage >= 0.945 for r in conformal_res.group_reports
+    mean_group_coverage = {g: float(np.mean(c)) for g, c in split_coverages.items()}
+    # Continuous scores: 1 - alpha <= E[coverage] <= 1 - alpha + 1/(n+1)
+    coverage_ok = all(
+        1 - alpha - 3 * np.std(c) / np.sqrt(n_splits)
+        <= mean_group_coverage[g]
+        <= 1 - alpha + 1 / (n_per_group + 1) + 3 * np.std(c) / np.sqrt(n_splits)
+        for g, c in split_coverages.items()
     )
+    min_group_coverage = min(r.empirical_coverage for r in conformal_res.group_reports)
 
     # 3. ECOA / Fair-Lending Disparate Impact Auditor & Constrained Threshold Repair
     # Simulate creditworthiness scoring where unprivileged group (0) experiences measurement
@@ -206,8 +205,8 @@ def run_benchmark_suite(seed: int = 42) -> Dict[str, object]:
         and drift_covariate.regime == "COVARIATE_DRIFT",
         "concept_drift_100pct_identified": conc_exact_match
         and drift_concept.regime == "CONCEPT_DRIFT",
-        "mondrian_coverage_ge_945_all_groups": all_groups_above_945,
-        "baseline_dir_below_065": fairness_res.baseline.disparate_impact_ratio < 0.65,
+        "mondrian_mean_coverage_matches_guarantee": coverage_ok,
+        "baseline_dir_below_080": fairness_res.baseline.disparate_impact_ratio < 0.80,
         "repaired_dir_ge_082": fairness_res.repaired.disparate_impact_ratio >= 0.82,
         "repaired_eod_le_003": abs(fairness_res.repaired.equal_opportunity_diff) <= 0.03,
         "utility_preserved_gt_97pct": fairness_res.auc_retention_ratio >= 0.97
@@ -224,6 +223,8 @@ def run_benchmark_suite(seed: int = 42) -> Dict[str, object]:
             "concept_drift": drift_concept.to_dict(),
         },
         "conformal": {
+            "n_splits": n_splits,
+            "mean_group_coverage": {g: round(c, 6) for g, c in mean_group_coverage.items()},
             "min_group_coverage": round(float(min_group_coverage), 6),
             "result": conformal_res.to_dict(),
         },

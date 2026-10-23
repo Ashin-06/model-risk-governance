@@ -166,7 +166,7 @@ def test_ecoa_fairness_four_fifths_repair_and_profit_preservation() -> None:
     bench = run_benchmark_suite(seed=42)
     fair = bench["fairness"]
 
-    assert fair["baseline"]["disparate_impact_ratio"] < 0.65
+    assert fair["baseline"]["disparate_impact_ratio"] < 0.80
     assert fair["baseline"]["dir_meets_four_fifths"] is False
 
     assert fair["repaired"]["disparate_impact_ratio"] >= 0.82
