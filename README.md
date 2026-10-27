@@ -105,24 +105,36 @@ These come from one run (seed 0); nothing was tuned after seeing them.
 ## Run it
 
 ```bash
-pip install -r requirements.txt
-python -m pytest -q                        # 9 tests
+pip install -r requirements-dev.lock && pip install -e .
+python -m pytest -q                        # 34 tests
 python -m mrmgov bench                     # add --json for the full report
-python -m mrmgov realdata --data FILE      # UCI credit default data, a few seconds
-python -m mrmgov serve --port 8019         # API + console at http://127.0.0.1:8019
+python -m mrmgov realdata --data FILE      # UCI credit default data, a few seconds (pip install -e ".[realdata]")
+python -m mrmgov serve                     # API + console at http://127.0.0.1:8019
 ```
 
 Endpoints:
-- `GET /health`
-- `GET /public-key`
+- `GET /public-key` (current and previous signing keys; public)
 - `POST /audit`
 - `POST /conformal/predict`
 - `POST /fairness/repair`
+- `GET /certificates`, `GET /certificates/{id}`
 - `GET /bench?seed=`
+- `GET /healthz`, `GET /readyz`, `GET /metrics`
 
-Configuration:
-- **`MRMGOV_API_KEY`:** when set, every endpoint except `/`, `/health` and `/public-key` requires it in the `X-API-Key` header. The console has a field for it. Without the key the server runs open, and `serve` refuses to bind a non-loopback address.
-- **`MRMGOV_SIGNING_KEY`:** an Ed25519 seed (64 hex characters). When it is unset, each process makes a new key, so certificates can only be verified against that process's `/public-key`.
+Configuration (all `MRMGOV_*` environment variables, see `docs/runbook.md`):
+- **API keys with roles.** Callers send a key in `X-API-Key` (the console has a field for it) or `Authorization: Bearer`. `validator` runs `/audit` and so issues certificates, `analyst` runs the conformal and fairness tools, `auditor` reads the certificate register, `monitor` reads metrics, `admin` does all of it plus the benchmark. `python -m mrmgov.ops keygen` makes a key and the hash to configure. Without keys the service runs open in development and refuses to listen on anything but loopback.
+- **`MRMGOV_SIGNING_KEY`:** base64 of a 32-byte Ed25519 seed (`keygen` prints one). Required in production; in development an unset key is generated per process, so certificates can only be verified against that process's `/public-key`. `MRMGOV_SIGNING_KEY_PREVIOUS` keeps older public keys listed while rotating.
+- **Certificate register.** Every certificate `/audit` signs is stored in SQLite or Postgres (`MRMGOV_DATABASE_URL`) with who asked for it and the public key that signs it.
+- `MRMGOV_ENV=production` refuses to start without hashed keys, the signing key and a database.
+
+**Docker.**
+
+```bash
+docker build -t model-risk-governance:1.0.0 .
+docker run -d -p 8019:8019 -v mrmgov-data:/data -e MRMGOV_API_KEYS='{"sha256:...": {"user": "ops", "role": "admin"}}' -e MRMGOV_SIGNING_KEY=... model-risk-governance:1.0.0
+```
+
+The image runs in production mode as a non-root user. Run without keys it exits with a configuration error.
 
 `/audit` uses y = 1 to mean default, and it takes a group label for every reference and production row. It works in three steps:
 1. It fits a logistic model on a random half of the reference rows.
@@ -142,6 +154,24 @@ A maximum-size `/audit` takes about 2.3 s.
 - **Drift detection is heuristic.** The thresholds are hand-set and the attribution shares aren't Shapley values. The density ratio comes from a linear classifier, so a shift in variance or interactions can be misattributed to concept drift. Two of 40 seeds flagged an extra feature.
 - **Conformal coverage is conditional on exchangeability.** Under drift, which is exactly when it matters, the guarantee no longer holds. Groups unseen in calibration fall back to the pooled threshold, which has no per-group guarantee. Coverage is marginal within a group, not per applicant.
 - **Fairness metrics need outcomes for everyone.** In lending, repayment is only observed for approved applicants, so EOD on real data needs reject inference. The group-threshold search is disparate treatment and is only for diagnosis (see above).
-- **The certificate is only as trustworthy as the key.** The key is an environment variable or per-process. There is no HSM, rotation, revocation or trusted timestamp, and the issuing time is whatever the server clock says.
-- **The API is a single process.** It has one shared API key, no per-user accounts and no rate limiting. A caller with the key can keep the CPU busy with maximum-size requests.
+- **The certificate is only as trustworthy as the key.** The key is an environment variable (rotatable, required in production). There is no HSM, revocation or trusted timestamp, and the issuing time is whatever the server clock says.
+- **The service certifies the data it is given.** It can't tell whether the reference and production rows are the real ones; certificates record who asked. Rate limits are per process, and a caller with a key can still keep the CPU busy with maximum-size requests.
 - **Not reviewed by a model-risk or fair-lending specialist.** A code audit of this repository does not make it fit for production model governance.
+
+## Production readiness
+
+In place (1.0.0):
+- Settings checked at startup; production refuses to start without hashed API keys, the signing key and a database, and never listens publicly without keys.
+- API keys with roles, per-client rate limit, request body cap, security headers, CORS only for listed origins, validation errors that don't echo input.
+- A certificate register in a database with migrations; signing-key rotation with previous public keys published.
+- JSON logs with request IDs, `/healthz`, `/readyz`, Prometheus `/metrics`.
+- Pinned dependency locks, a non-root container image with a health check, CI running ruff, bandit, pip-audit and the tests.
+- `SECURITY.md`, `docs/threat-model.md`, `docs/runbook.md`, `docs/model-card.md`.
+
+Still needed before real use:
+- Review by model-risk and fair-lending specialists, and independent validation of the checks against the bank's own models and data (with real time windows and reject inference).
+- An independent security review and penetration test.
+- RBI model-risk guidance and DPDP Act 2023 sign-off for the data sent to the service; ECOA / Reg B review wherever US lending rules apply.
+- Real integrations: the model inventory, monitoring pipelines and the governance workflow that acts on certificates.
+- HSM/KMS for the signing key, a revocation list and trusted timestamps for certificates, and write-once export of the register.
+- An on-call team, SLOs and alerting wired to the metrics above.
