@@ -72,7 +72,9 @@ def scenario(X, y, sex, ref_mask: np.ndarray, seed: int = 0, alpha: float = 0.05
     half = rng.permutation(prod)
     p_fit, p_eval = half[: len(half) // 2], half[len(half) // 2:]
     refit = _fit(X[p_fit], y[p_fit])
-    brier = lambda m, idx: float(np.mean((y[idx] - m(X[idx])) ** 2))
+
+    def brier(m, idx):
+        return float(np.mean((y[idx] - m(X[idx])) ** 2))
 
     conf = MondrianConformalPredictor(alpha=alpha).fit(model(X[cal]), y[cal], sex[cal])
     return {

@@ -1,7 +1,8 @@
 """
 CLI entry point for `mrmgov`:
   - `python -m mrmgov bench`
-  - `python -m mrmgov serve --port 8019`  (refuses a non-loopback --host without MRMGOV_API_KEY)
+  - `python -m mrmgov serve`    (settings: MRMGOV_* environment variables, see ops.py)
+  - `python -m mrmgov migrate`  (apply database migrations to MRMGOV_DATABASE_URL and exit)
   - `python -m mrmgov realdata --data FILE` (UCI credit default data -> results/real_data.json)
 """
 
@@ -11,7 +12,6 @@ import argparse
 import json
 import os
 import sys
-import uvicorn
 
 from .bench import run_benchmark_suite
 
@@ -28,8 +28,9 @@ def main(argv: list[str] | None = None) -> int:
     bench_p.add_argument("--json", action="store_true", help="Output full JSON report")
 
     serve_p = sub.add_parser("serve", help="Start FastAPI governance server")
-    serve_p.add_argument("--host", type=str, default="127.0.0.1")
-    serve_p.add_argument("--port", type=int, default=8019)
+    serve_p.add_argument("--host", help="default MRMGOV_HOST or 127.0.0.1; any other address needs API keys")
+    serve_p.add_argument("--port", type=int, help="default MRMGOV_PORT or 8019")
+    sub.add_parser("migrate", help="apply database migrations to MRMGOV_DATABASE_URL")
 
     real_p = sub.add_parser("realdata", help="Run the checks on the UCI credit-card default data")
     real_p.add_argument("--data", required=True, help='"default of credit card clients.xls" (or a CSV export)')
@@ -41,11 +42,26 @@ def main(argv: list[str] | None = None) -> int:
 
         realdata(args.data, args.out)
         return 0
+    if args.command == "migrate":
+        from . import db, ops
+
+        applied = db.migrate(db.engine(ops.load_settings().database_url))
+        print(*(applied or ["up to date"]), sep="\n")
+        return 0
     if args.command == "serve":
-        if args.host not in ("127.0.0.1", "localhost", "::1") and not os.environ.get("MRMGOV_API_KEY"):
-            print("Refusing to listen on a non-loopback address without MRMGOV_API_KEY set.", file=sys.stderr)
-            return 2
-        uvicorn.run("mrmgov.api:app", host=args.host, port=args.port, reload=False)
+        import uvicorn
+
+        from . import ops
+
+        for name, val in (("HOST", args.host), ("PORT", args.port)):
+            if val is not None:
+                os.environ[f"MRMGOV_{name}"] = str(val)
+        try:
+            settings = ops.load_settings()  # fail here, before uvicorn, with a readable message
+        except ops.ConfigError as e:
+            sys.exit(f"configuration error: {e}")
+        ops.setup_logging(settings.log_level)
+        uvicorn.run("mrmgov.api:app", host=settings.host, port=settings.port, log_config=None, access_log=False)
         return 0
 
     # Default or `bench` command

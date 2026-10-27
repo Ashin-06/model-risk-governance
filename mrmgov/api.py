@@ -3,39 +3,43 @@ FastAPI service for the model-risk checks (port 8019).
 
 Endpoints:
   - GET  /                  : web console (HTML)
-  - GET  /health            : service status
-  - GET  /public-key        : Ed25519 key that signs certificates
-  - POST /audit             : drift + conformal + fairness + signed certificate
-  - POST /conformal/predict : Mondrian split conformal prediction sets
-  - POST /fairness/repair   : disparate impact metrics and group-threshold search
-  - GET  /bench             : benchmark on generated data
+  - GET  /public-key        : Ed25519 keys that sign certificates (current and previous)
+  - POST /audit             : drift + conformal + fairness + signed certificate (permission: audit)
+  - POST /conformal/predict : Mondrian split conformal prediction sets            (check)
+  - POST /fairness/repair   : disparate impact metrics and group-threshold search (check)
+  - GET  /certificates      : certificates issued so far; /certificates/{id} one  (certificates)
+  - GET  /bench             : benchmark on generated data                       (bench)
+  - GET  /healthz, /readyz, /metrics (see ops.py)
 
-Set MRMGOV_API_KEY to require it in the X-API-Key header on every endpoint except
-/, /health and /public-key (unset = open, for local use; `python -m mrmgov serve`
-refuses a non-loopback host without it).
+Settings come from MRMGOV_* environment variables (ops.py). The signing key is
+MRMGOV_SIGNING_KEY (base64 Ed25519 seed, required in production); every certificate
+issued is kept in the database (register.py).
 """
 
 from __future__ import annotations
 
 from functools import lru_cache
-import hmac
-import os
 from pathlib import Path
 from typing import Annotated, Dict, List, Optional, Union
 import numpy as np
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
-from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
-from fastapi.exceptions import RequestValidationError
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi import Depends, FastAPI, HTTPException, Query
+from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 
+from . import db, ops
 from .drift import _fit_logistic_Newton, _sigmoid, analyze_drift
 from .conformal import MondrianConformalPredictor
 from .fairness import repair_group_thresholds
 from .report import generate_governance_certificate
 from .bench import run_benchmark_suite
+from .register import Register
 
+settings = ops.load_settings()
+ops.setup_logging(settings.log_level)
+store = db.connect(settings.database_url)
+register = Register(store)
 
 app = FastAPI(
     title="Model Risk Governance checks (mrmgov)",
@@ -45,48 +49,30 @@ app = FastAPI(
     ),
     version="1.0.0",
 )
+ops.install(app, settings, {"database": lambda: store.connect().close()})
 
 CONSOLE_PATH = Path(__file__).resolve().parent.parent / "web" / "console.html"
-API_KEY = os.environ.get("MRMGOV_API_KEY")
-MAX_BODY_BYTES = 16_000_000
 MAX_ROWS = 10_000      # per X matrix
 MAX_FEATURES = 50
 MAX_POINTS = 50_000    # per 1-D list
 
-# MRMGOV_SIGNING_KEY = 64 hex chars (Ed25519 seed). Unset: a new key per process, so
-# certificates from an earlier run can't be checked against GET /public-key.
-_seed = os.environ.get("MRMGOV_SIGNING_KEY")
-SIGNING_KEY = Ed25519PrivateKey.from_private_bytes(bytes.fromhex(_seed)) if _seed else Ed25519PrivateKey.generate()
-PUBLIC_KEY_HEX = SIGNING_KEY.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw).hex()
+# In development without MRMGOV_SIGNING_KEY the key is generated per process (ops.py warns),
+# so certificates from an earlier run can't be checked against GET /public-key.
+SIGNING_KEY = Ed25519PrivateKey.from_private_bytes(settings.secret["SIGNING_KEY"])
+
+
+def _public_hex(seed: bytes) -> str:
+    return Ed25519PrivateKey.from_private_bytes(seed).public_key().public_bytes(Encoding.Raw, PublicFormat.Raw).hex()
+
+
+PUBLIC_KEY_HEX = _public_hex(settings.secret["SIGNING_KEY"])
+PREVIOUS_PUBLIC_KEYS = [_public_hex(k) for k in settings.previous["SIGNING_KEY"]]
 
 Num = Annotated[float, Field(allow_inf_nan=False)]
 Prob = Annotated[float, Field(ge=0.0, le=1.0)]
 Label = Annotated[int, Field(ge=0, le=1)]
 Group = Union[Annotated[str, Field(max_length=64)], int]
 Row = Annotated[List[Num], Field(min_length=1, max_length=MAX_FEATURES)]
-
-
-def require_key(x_api_key: str | None = Header(default=None)) -> None:
-    if API_KEY and not hmac.compare_digest(x_api_key or "", API_KEY):
-        raise HTTPException(401, "missing or wrong X-API-Key")
-
-
-@app.middleware("http")
-async def limit_body(request: Request, call_next):
-    if request.method == "POST":
-        # Chunked bodies have no length to check up front, so refuse them
-        length = request.headers.get("content-length", "0")
-        if "transfer-encoding" in request.headers or not length.isdigit() or int(length) > MAX_BODY_BYTES:
-            return JSONResponse({"detail": "body must have a Content-Length of at most 16 MB"}, status_code=413)
-    return await call_next(request)
-
-
-@app.exception_handler(RequestValidationError)
-async def validation_error(request: Request, exc: RequestValidationError) -> JSONResponse:
-    # The default handler echoes the offending input, which fails to serialise when it is NaN
-    # (a 500) and can send a 50,000-item list straight back
-    errors = [{k: e[k] for k in ("type", "loc", "msg") if k in e} for e in exc.errors()]
-    return JSONResponse({"detail": errors}, status_code=422)
 
 
 class AuditRequest(BaseModel):
@@ -145,19 +131,14 @@ def get_console() -> HTMLResponse:
     return HTMLResponse(content="<h1>mrmgov</h1><p>web/console.html not found.</p>")
 
 
-@app.get("/health")
-def health_check() -> Dict[str, object]:
-    return {"status": "ok", "package": "mrmgov", "port": 8019}
-
-
 @app.get("/public-key")
-def get_public_key() -> Dict[str, str]:
-    """Ed25519 key that signs certificates; fetch it once and pin it, don't trust it per-response."""
-    return {"algorithm": "Ed25519", "public_key": PUBLIC_KEY_HEX}
+def get_public_key() -> Dict[str, object]:
+    """Ed25519 keys that sign certificates; fetch them once and pin them, don't trust them per-response."""
+    return {"algorithm": "Ed25519", "public_key": PUBLIC_KEY_HEX, "previous_public_keys": PREVIOUS_PUBLIC_KEYS}
 
 
-@app.post("/audit", dependencies=[Depends(require_key)])
-def post_audit(req: AuditRequest) -> Dict[str, object]:
+@app.post("/audit")
+def post_audit(req: AuditRequest, ident: dict = Depends(ops.require("audit"))) -> Dict[str, object]:
     """
     Drift attribution, Mondrian conformal sets, group fairness metrics and a signed
     certificate. A logistic model is fitted on a random half of the reference rows and
@@ -214,6 +195,8 @@ def post_audit(req: AuditRequest) -> Dict[str, object]:
             fairness_result=fairness_res,
             signing_key=SIGNING_KEY,
         )
+        register.add(cert, ident["user"] or "demo", PUBLIC_KEY_HEX)
+        ops.DECISIONS.labels(decision=cert.overall_disposition).inc()
 
         return {
             "drift": drift_res.to_dict(),
@@ -225,8 +208,8 @@ def post_audit(req: AuditRequest) -> Dict[str, object]:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
-@app.post("/conformal/predict", dependencies=[Depends(require_key)])
-def post_conformal_predict(req: ConformalRequest) -> Dict[str, object]:
+@app.post("/conformal/predict")
+def post_conformal_predict(req: ConformalRequest, ident: dict = Depends(ops.require("check"))) -> Dict[str, object]:
     """Calibrate the Mondrian conformal predictor and return group-conditional prediction sets."""
     try:
         predictor = MondrianConformalPredictor(alpha=req.alpha)
@@ -237,8 +220,8 @@ def post_conformal_predict(req: ConformalRequest) -> Dict[str, object]:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
-@app.post("/fairness/repair", dependencies=[Depends(require_key)])
-def post_fairness_repair(req: FairnessRepairRequest) -> Dict[str, object]:
+@app.post("/fairness/repair")
+def post_fairness_repair(req: FairnessRepairRequest, ident: dict = Depends(ops.require("check"))) -> Dict[str, object]:
     """Disparate impact metrics and the group-threshold search (a diagnostic; see fairness.py)."""
     try:
         res = repair_group_thresholds(
@@ -262,7 +245,25 @@ def post_fairness_repair(req: FairnessRepairRequest) -> Dict[str, object]:
 _bench = lru_cache(maxsize=8)(run_benchmark_suite)
 
 
-@app.get("/bench", dependencies=[Depends(require_key)])
-def get_benchmark(seed: int = Query(default=42, ge=0, le=2**32 - 1)) -> Dict[str, object]:
+@app.get("/bench")
+def get_benchmark(seed: int = Query(default=42, ge=0, le=2**32 - 1),
+                  ident: dict = Depends(ops.require("bench"))) -> Dict[str, object]:
     """Run (or return the cached) benchmark on generated data."""
     return _bench(seed)
+
+
+@app.get("/certificates")
+def list_certificates(model_id: Optional[str] = Query(default=None, max_length=64),
+                      limit: int = Query(default=50, ge=1, le=500),
+                      ident: dict = Depends(ops.require("certificates"))) -> Dict[str, object]:
+    """Certificates issued so far, newest first (summary fields only)."""
+    return {"certificates": register.recent(model_id, limit)}
+
+
+@app.get("/certificates/{certificate_id}")
+def get_certificate(certificate_id: str, ident: dict = Depends(ops.require("certificates"))) -> Dict[str, object]:
+    """One stored certificate, with who asked for it and the public key that signs it."""
+    found = register.get(certificate_id[:64])
+    if found is None:
+        raise HTTPException(status_code=404, detail="no such certificate")
+    return found

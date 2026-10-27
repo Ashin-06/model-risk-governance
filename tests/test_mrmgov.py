@@ -239,9 +239,8 @@ def test_fastapi_endpoints_and_cli() -> None:
     assert r_root.status_code == 200
     assert "Model Risk Checks" in r_root.text
 
-    r_health = client.get("/health")
+    r_health = client.get("/healthz")
     assert r_health.status_code == 200
-    assert r_health.json()["port"] == 8019
 
     r_bench = client.get("/bench")
     assert r_bench.status_code == 200
@@ -306,22 +305,28 @@ def test_fastapi_endpoints_and_cli() -> None:
 
 
 def test_api_key_and_input_limits(monkeypatch: pytest.MonkeyPatch) -> None:
+    import importlib
+    import json
+
     import mrmgov.api as api_mod
 
-    client = TestClient(app)
+    monkeypatch.setenv("MRMGOV_API_KEYS", json.dumps({"s3cret": {"user": "t", "role": "admin"}}))
+    api_mod = importlib.reload(api_mod)
+    client = TestClient(api_mod.app)
     conf = {
         "probs_calib": [0.1, 0.9], "y_calib": [0, 1], "groups_calib": ["A", "A"],
         "probs_test": [0.2], "groups_test": ["A"],
     }
 
-    monkeypatch.setattr(api_mod, "API_KEY", "s3cret")
     assert client.post("/conformal/predict", json=conf).status_code == 401
     assert client.post("/conformal/predict", json=conf, headers={"X-API-Key": "nope"}).status_code == 401
     assert client.post("/conformal/predict", json=conf, headers={"X-API-Key": "s3cret"}).status_code == 200
     assert client.get("/bench").status_code == 401
-    assert client.get("/health").status_code == 200
+    assert client.get("/healthz").status_code == 200
     assert client.get("/public-key").status_code == 200
-    monkeypatch.setattr(api_mod, "API_KEY", None)
+    monkeypatch.delenv("MRMGOV_API_KEYS")
+    api_mod = importlib.reload(api_mod)
+    client = TestClient(api_mod.app)
 
     # Out-of-range probabilities, labels and oversized lists are 422s, not 500s
     assert client.post("/conformal/predict", json={**conf, "probs_test": [1.5]}).status_code == 422
@@ -331,7 +336,7 @@ def test_api_key_and_input_limits(monkeypatch: pytest.MonkeyPatch) -> None:
     nan_body = '{"X_ref": [[NaN]], "y_ref": [0], "X_prod": [[0]], "y_prod": [0], "groups_ref": [0], "groups_prod": [0]}'
     r = client.post("/audit", content=nan_body, headers={"Content-Type": "application/json"})
     assert r.status_code == 422
-    r = client.post("/fairness/repair", content=b"x" * (api_mod.MAX_BODY_BYTES + 1))
+    r = client.post("/fairness/repair", content=b"x" * (api_mod.settings.max_body_bytes + 1))
     assert r.status_code == 413
 
     # Ragged rows and mismatched lengths are 400s with a reason
