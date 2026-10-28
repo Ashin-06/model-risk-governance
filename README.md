@@ -75,3 +75,7 @@ Details are in [docs/evaluation.md](docs/evaluation.md).
 - The checks have not been reviewed by model-risk or fair-lending specialists, and the code has not had an independent security review.
 
 See [SECURITY.md](SECURITY.md), [docs/threat-model.md](docs/threat-model.md) and [docs/model-card.md](docs/model-card.md).
+
+## License
+
+MIT. See [LICENSE](LICENSE).
