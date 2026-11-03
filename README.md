@@ -12,7 +12,7 @@ The certificate records automated checks. It is not a model approval: frameworks
 ## Quick start
 
 ```bash
-pip install -r requirements-dev.lock && pip install -e .
+python -m pip install -r requirements-dev.lock && python -m pip install -e .
 python -m pytest -q                        # 34 tests
 python -m mrmgov bench                     # add --json for the full report
 python -m mrmgov realdata --data FILE      # UCI credit default data, a few seconds
